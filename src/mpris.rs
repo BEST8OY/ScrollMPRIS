@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
-const PLAYING_ICON: &str = " 󲒌 ";
-const PAUSED_ICON: &str = " 󲏉 ";
+const PLAYING_ICON: &str = "  ";
+const PAUSED_ICON: &str = "  ";
 const DBUS_TIMEOUT: Duration = Duration::from_millis(500);
 
 ///
