@@ -21,8 +21,8 @@ pub struct MprisPlayer {
 impl MprisPlayer {
     ///
     /// Constructs the display parts (icon, metadata text, CSS status class) based on the player's state.
-    /// - For "Playing": returns (PLAYING_ICON, "artist - title", "playing")
-    /// - For "Paused": returns (PAUSED_ICON, "artist - title", "paused")
+    /// - For "Playing": returns (PLAYING_ICON, "title - artist", "playing")
+    /// - For "Paused": returns (PAUSED_ICON, "title - artist", "paused")
     /// - For "Stopped": returns ("", "", "stopped")
     ///
     pub fn output_parts(&self) -> (String, String, String) {
