@@ -17,7 +17,7 @@ Scrolling MPRIS module for waybar
 # How to add as module to waybar?
 - Add this to waybar config
 ```
-    "custom/waybar-scrolling-mpris": {
+    "custom/ScrollMPRIS": {
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/ScrollMPRIS",
     "on-click": "playerctl play-pause",
