@@ -195,21 +195,25 @@ fn update_status(config: &Config, scroll_offset: &mut usize) {
         return;
     }
 
-    let player = players.iter().find(|p| {
+    // Look for a player that is not blocked.
+    if let Some(player) = players.iter().find(|p| {
         !config.blocked_players.iter().any(|b| p.service.to_lowercase().contains(b))
-    }).unwrap_or(&players[0]);
+    }) {
+        let (icon, metadata, normalized_status) = player.output_parts();
+        let status_class = if normalized_status == "stopped" { "stopped" } else { normalized_status.as_str() };
 
-    let (icon, metadata, normalized_status) = player.output_parts();
-    let status_class = if normalized_status == "stopped" { "stopped" } else { normalized_status.as_str() };
-
-    let display_text = if metadata.chars().count() > config.width {
-        let scrolled = scroll::scroll_text(&metadata, *scroll_offset, config.width);
-        *scroll_offset = scroll_offset.wrapping_add(1);
-        format!("{} {}", icon, scrolled)
+        let display_text = if metadata.chars().count() > config.width {
+            let scrolled = scroll::scroll_text(&metadata, *scroll_offset, config.width);
+            *scroll_offset = scroll_offset.wrapping_add(1);
+            format!("{} {}", icon, scrolled)
+        } else {
+            format!("{} {}", icon, metadata)
+        };
+        println!("{}", json!({"text": display_text, "class": status_class}));
     } else {
-        format!("{} {}", icon, metadata)
-    };
-    println!("{}", json!({"text": display_text, "class": status_class}));
+        // No non-blocked player found.
+        println!("{}", json!({"text": "", "class": "none"}));
+    }
 }
 
 fn main() {
