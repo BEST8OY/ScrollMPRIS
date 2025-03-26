@@ -19,7 +19,7 @@ Scrolling MPRIS module for waybar
 ```
     "custom/waybar-scrolling-mpris": {
     "return-type": "json",
-    "exec": "~/.config/waybar/scripts/ScrollMPRIS -b edge",
+    "exec": "~/.config/waybar/scripts/ScrollMPRIS",
     "on-click": "playerctl play-pause",
 },
 ```
