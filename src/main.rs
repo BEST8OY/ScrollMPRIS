@@ -18,7 +18,15 @@ mod mpris {
         if service.contains("spotify") {
             ""
         } else if service.contains("vlc") {
-            "嗢"
+            "󰕼"
+        } else if service.contains("edge") {
+            "󰇩"
+        } else if service.contains("firefox") {
+            "󰈹"
+        } else if service.contains("mpv") {
+            ""
+        } else if service.contains("chrome") {
+            ""
         } else {
             DEFAULT_SERVICE_ICON
         }
