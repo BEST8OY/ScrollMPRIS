@@ -9,11 +9,10 @@ mod mpris {
     use std::time::Duration;
     use serde::{Serialize, Deserialize};
 
-    const DEFAULT_SERVICE_ICON: &str = "";
-    const DBUS_TIMEOUT: Duration = Duration::from_millis(500);
+    const DEFAULT_ICON: &str = "";
+    const TIMEOUT: Duration = Duration::from_millis(500);
 
-    /// Returns a service-specific icon if a mapping is found.
-    fn get_service_icon(service: &str) -> &'static str {
+    fn icon_for(service: &str) -> &'static str {
         let service = service.to_lowercase();
         if service.contains("spotify") {
             ""
@@ -27,15 +26,12 @@ mod mpris {
             ""
         } else if service.contains("chrome") {
             ""
-        } else if service.contains("TelegramDesktop") {
-            ""
         } else {
-            DEFAULT_SERVICE_ICON
+            DEFAULT_ICON
         }
     }
 
-    /// Returns the playback indicator based on the status.
-    fn playback_indicator(status: &str) -> &'static str {
+    fn status_indicator(status: &str) -> &'static str {
         match status {
             "playing" => "",
             "paused"  => "",
@@ -43,7 +39,6 @@ mod mpris {
         }
     }
 
-    /// Represents an MPRIS player.
     #[derive(Debug, Serialize, Deserialize, Clone)]
     pub struct MprisPlayer {
         pub service: String,
@@ -53,14 +48,12 @@ mod mpris {
     }
 
     impl MprisPlayer {
-        /// Returns a tuple containing the combined icon (service icon + playback indicator),
-        /// metadata string, and the normalized playback status.
-        pub fn output_parts(&self) -> (String, String, String) {
+        pub fn display_parts(&self) -> (String, String, String) {
             let status = self.playback_status.to_lowercase();
             if status == "stopped" {
                 return (String::new(), String::new(), status);
             }
-            let icon = format!("{} {}", get_service_icon(&self.service), playback_indicator(&status));
+            let icon = format!("{} {}", icon_for(&self.service), status_indicator(&status));
             let metadata = match (&self.title, &self.artist) {
                 (Some(t), Some(a)) => format!("{} - {}", t, a),
                 (Some(t), None)    => t.clone(),
@@ -70,81 +63,105 @@ mod mpris {
         }
     }
 
-    /// Attempts to establish a D-Bus session connection.
-    fn dbus_connection() -> Option<Connection> {
+    fn connection() -> Option<Connection> {
         Connection::new_session().ok()
     }
 
-    /// Extracts title and artist metadata from a D-Bus metadata hash map.
-    fn extract_metadata(
-        metadata: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>,
-    ) -> (Option<String>, Option<String>) {
-        let title = metadata.get("xesam:title")
+    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>) -> (Option<String>, Option<String>) {
+        let title = map.get("xesam:title")
             .and_then(|v| v.0.as_str())
             .map(String::from);
-        let artist = metadata.get("xesam:artist")
-            .and_then(|v| v.0.as_iter()
-                .and_then(|mut iter| iter.next())
-                .and_then(|item| item.as_str())
-                .map(String::from)
-            );
+        let artist = map.get("xesam:artist")
+            .and_then(|v| {
+                v.0.as_iter()
+                    .and_then(|mut iter| iter.next())
+                    .and_then(|val| val.as_str())
+                    .map(String::from)
+            });
         (title, artist)
     }
 
-    /// Retrieves a list of active MPRIS players.
-    pub fn get_active_players() -> Vec<MprisPlayer> {
-        // Try to establish a connection. If fails, return empty vector.
-        let conn = if let Some(c) = dbus_connection() {
-            c
-        } else {
-            return Vec::new();
+    pub fn active_players() -> Vec<MprisPlayer> {
+        let conn = match connection() {
+            Some(c) => c,
+            None => return Vec::new(),
         };
-    
-        let proxy = conn.with_proxy(
-            "org.mpris.MediaPlayer2.playerctld",
-            "/org/mpris/MediaPlayer2",
-            DBUS_TIMEOUT,
-        );
-    
-        let player_names: Vec<String> = proxy
-            .get("com.github.altdesktop.playerctld", "PlayerNames")
-            .unwrap_or_default();
-    
+
+        let proxy = conn.with_proxy("org.mpris.MediaPlayer2.playerctld", "/org/mpris/MediaPlayer2", TIMEOUT);
+        let player_names: Vec<String> = proxy.get("com.github.altdesktop.playerctld", "PlayerNames").unwrap_or_default();
+
         player_names.into_iter().filter_map(|service| {
-            let player_proxy = conn.with_proxy(&service, "/org/mpris/MediaPlayer2", DBUS_TIMEOUT);
-            let playback_status: String = player_proxy
-                .get("org.mpris.MediaPlayer2.Player", "PlaybackStatus")
-                .ok()?;
-            let metadata_map: Option<HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>> =
+            let player_proxy = conn.with_proxy(&service, "/org/mpris/MediaPlayer2", TIMEOUT);
+            let playback_status: String = player_proxy.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus").ok()?;
+            let metadata: Option<HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>> =
                 player_proxy.get("org.mpris.MediaPlayer2.Player", "Metadata").ok();
-            let (title, artist) = metadata_map
-                .as_ref()
-                .map_or((None, None), |map| extract_metadata(map));
+            let (title, artist) = metadata.as_ref().map_or((None, None), extract_metadata);
             Some(MprisPlayer { service, playback_status, title, artist })
         }).collect()
     }
 }
 
 mod scroll {
-    pub const SCROLL_SPACER: &str = "   ";
+    pub const WRAP_SPACER: &str = "   ";
+    pub const RESET_HOLD: usize = 2;
 
-    /// Scrolls text by taking a substring of the padded text based on the offset.
-    pub fn scroll_text(text: &str, offset: usize, width: usize) -> String {
-        let padded = format!("{}{}", text, SCROLL_SPACER);
+    /// Returns a substring of the padded text using modulo arithmetic.
+    pub fn wrapping(text: &str, offset: usize, width: usize) -> String {
+        let padded = format!("{}{}", text, WRAP_SPACER);
         let chars: Vec<char> = padded.chars().collect();
         if chars.len() <= width {
             return text.to_string();
         }
-        (0..width)
-            .map(|i| chars[(offset + i) % chars.len()])
-            .collect()
+        (0..width).map(|i| chars[(offset + i) % chars.len()]).collect()
     }
+
+    /// Holds scrolling state for the reset mode.
+    pub struct ResetState {
+        pub offset: usize,
+        pub hold: usize,
+    }
+
+    impl ResetState {
+        pub fn new() -> Self {
+            Self { offset: 0, hold: 0 }
+        }
+    }
+
+    /// Scrolls text in reset mode with a fixed delay at the start and end.
+    pub fn reset(text: &str, state: &mut ResetState, width: usize) -> String {
+        let padded: String = text.to_string();
+        let chars: Vec<char> = padded.chars().collect();
+        if chars.len() <= width {
+            return padded;
+        }
+        let max_offset = chars.len() - width;
+        let frame: String = chars.iter().skip(state.offset).take(width).collect();
+
+        if state.offset == 0 || state.offset == max_offset {
+            if state.hold < RESET_HOLD {
+                state.hold += 1;
+            } else {
+                state.hold = 0;
+                state.offset = if state.offset == max_offset { 0 } else { state.offset + 1 };
+            }
+        } else {
+            state.offset += 1;
+        }
+        frame
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ScrollMode {
+    Wrapping,
+    Reset,
 }
 
 struct Config {
     delay: u64,
     width: usize,
-    blocked_players: Vec<String>,
+    blocked: Vec<String>,
+    scroll_mode: ScrollMode,
 }
 
 impl Config {
@@ -152,75 +169,79 @@ impl Config {
         Self {
             delay: 1000,
             width: 40,
-            blocked_players: Vec::new(),
+            blocked: Vec::new(),
+            scroll_mode: ScrollMode::Wrapping,
         }
     }
 
-    /// Parses command-line arguments into a configuration.
     fn from_args() -> Self {
         let mut config = Self::default();
         let args: Vec<String> = env::args().skip(1).collect();
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "-s" => if let Some(speed_str) = iter.next() {
-                    if let Ok(speed) = speed_str.parse::<u32>() {
-                        // Map speed (0: slow=1000ms, 100: fast=100ms)
-                        config.delay = (1000u64).saturating_sub((speed as u64).saturating_mul(9)).max(100);
-                    }
+                "-s" => if let Some(s) = iter.next().and_then(|s| s.parse::<u32>().ok()) {
+                    config.delay = (1000u64).saturating_sub((s as u64).saturating_mul(9)).max(100);
                 },
-                "-w" => if let Some(width_str) = iter.next() {
-                    if let Ok(w) = width_str.parse::<usize>() {
-                        config.width = w;
-                    }
+                "-w" => if let Some(w) = iter.next().and_then(|w| w.parse::<usize>().ok()) {
+                    config.width = w;
                 },
-                "-b" => if let Some(blocked) = iter.next() {
-                    config.blocked_players = blocked.split(',')
-                        .map(|s| s.trim().to_lowercase())
-                        .collect();
+                "-b" => if let Some(b) = iter.next() {
+                    config.blocked = b.split(',').map(|s| s.trim().to_lowercase()).collect();
                 },
-                _ => continue,
+                "--scroll" => if let Some(mode) = iter.next() {
+                    config.scroll_mode = match mode.to_lowercase().as_str() {
+                        "reset" => ScrollMode::Reset,
+                        "wrapping" => ScrollMode::Wrapping,
+                        _ => config.scroll_mode,
+                    };
+                },
+                _ => {},
             }
         }
         config
     }
 }
 
-/// Selects an active (non-blocked) player, prepares display text using scrolling as needed,
-/// and outputs JSON on each update.
-fn update_status(config: &Config, scroll_offset: &mut usize) {
-    let players = mpris::get_active_players();
+fn update_status(config: &Config, reset_state: &mut scroll::ResetState, wrap_offset: &mut usize) {
+    let players = mpris::active_players();
     if players.is_empty() {
         println!("{}", json!({"text": "", "class": "none"}));
         return;
     }
 
-    // Look for a player that is not blocked.
     if let Some(player) = players.iter().find(|p| {
-        !config.blocked_players.iter().any(|b| p.service.to_lowercase().contains(b))
+        !config.blocked.iter().any(|b| p.service.to_lowercase().contains(b))
     }) {
-        let (icon, metadata, normalized_status) = player.output_parts();
-        let status_class = if normalized_status == "stopped" { "stopped" } else { normalized_status.as_str() };
-
-        let display_text = if metadata.chars().count() > config.width {
-            let scrolled = scroll::scroll_text(&metadata, *scroll_offset, config.width);
-            *scroll_offset = scroll_offset.wrapping_add(1);
-            format!("{} {}", icon, scrolled)
+        let (icon, meta, norm) = player.display_parts();
+        let class = if norm == "stopped" { "stopped" } else { norm.as_str() };
+        let display_text = if meta.chars().count() > config.width {
+            match config.scroll_mode {
+                ScrollMode::Wrapping => {
+                    let text = scroll::wrapping(&meta, *wrap_offset, config.width);
+                    *wrap_offset = wrap_offset.wrapping_add(1);
+                    format!("{} {}", icon, text)
+                },
+                ScrollMode::Reset => {
+                    let text = scroll::reset(&meta, reset_state, config.width);
+                    format!("{} {}", icon, text)
+                },
+            }
         } else {
-            format!("{} {}", icon, metadata)
+            format!("{} {}", icon, meta)
         };
-        println!("{}", json!({"text": display_text, "class": status_class}));
+        println!("{}", json!({"text": display_text, "class": class}));
     } else {
-        // No non-blocked player found.
         println!("{}", json!({"text": "", "class": "none"}));
     }
 }
 
 fn main() {
     let config = Config::from_args();
-    let mut scroll_offset = 0;
+    let mut reset_state = scroll::ResetState::new();
+    let mut wrap_offset = 0;
     loop {
-        update_status(&config, &mut scroll_offset);
+        update_status(&config, &mut reset_state, &mut wrap_offset);
         thread::sleep(Duration::from_millis(config.delay));
     }
 }
