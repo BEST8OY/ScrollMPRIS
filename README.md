@@ -38,6 +38,7 @@ usage: ScrollMPRIS [options]
     -s 50                         // Scroll speed (0: slow=1000ms, 100: fast=100ms) ---> Use number between 0-100
     -w 40                         // Max width
     -b edge,firefox,mpv           // Use this to block certain players
+    --scroll wrapped OR reset     //Default is wrapped which is like a rollercoaster, reset mode when the scroll ends it'll start from the begining
 ```
 # To do?
 ?
