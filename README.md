@@ -20,6 +20,7 @@ Scrolling MPRIS module for waybar
     "custom/ScrollMPRIS": {
     "return-type": "json",
     "exec": "~/.config/waybar/scripts/ScrollMPRIS",
+    "escape": true ,
     "on-click": "playerctl play-pause",
 },
 ```
