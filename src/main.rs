@@ -25,6 +25,8 @@ mod mpris {
             ""
         } else if service.contains("chrome") {
             ""
+        } else if service.contains("telegramdesktop") {
+            ""
         } else {
             DEFAULT_ICON
         }
