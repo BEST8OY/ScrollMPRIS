@@ -8,7 +8,6 @@ Scrolling MPRIS module for Waybar.
 - **playerctl:** Make sure this daemon is running.  
 - **Cargo:** Rust's package manager and build tool ([Learn more](https://doc.rust-lang.org/cargo/)).
 
----
 
 ## Installation & Build
 
@@ -35,13 +34,9 @@ Scrolling MPRIS module for Waybar.
    ```
    ScrollMPRIS/target/release/
    ```
-
----
-
 ## Waybar Integration
 
 To add ScrollMPRIS as a custom module in [Waybar](https://github.com/Alexays/Waybar), insert the following snippet into your Waybar config:
-
 ```json
 "custom/ScrollMPRIS": {
     "return-type": "json",
@@ -54,19 +49,15 @@ To add ScrollMPRIS as a custom module in [Waybar](https://github.com/Alexays/Way
 ### Styling with CSS
 
 You can customize the module's appearance using these selectors in your Waybar style:
-
 ```css
 #custom-ScrollMPRIS,
 #custom-ScrollMPRIS.playing,
 #custom-ScrollMPRIS.paused,
 ```
 
----
-
 ## Customization
 
 ScrollMPRIS offers several command-line options to tailor its behavior:
-
 ```plaintext
 usage: ScrollMPRIS [options]
     options:
@@ -75,35 +66,25 @@ usage: ScrollMPRIS [options]
     -b edge,firefox,mpv           // Block certain players (comma-separated list)
     --scroll wrapped OR reset     // Choose scrolling behavior: "wrapped" for continuous loop, "reset" to restart after finishing
 ```
-
 Simply pass these options when running the executable to adjust speed, width, blocked players, and scroll mode to your liking.
 
----
 ## Preview
+
 #### Reset mode
 ![GIF_20250330_170139_838](https://github.com/user-attachments/assets/5a151c83-394d-4f12-9660-6f248de1a71d)
 #### Wrapped mode
 ![GIF_20250330_170053_721](https://github.com/user-attachments/assets/c72cc4be-3385-4a53-8848-7c292e12e400)
----
 
 ## Future Enhancements
-
-- **Customization:** Additional settings 
-
----
-
+- **Customization:** Additional settings
+- 
 ## Contributing
 
 Contributions, feature requests, and issue reports are always welcome!  
 Feel free to open an issue or submit a pull request on our [GitHub issues page](https://github.com/BEST8OY/ScrollMPRIS/issues).
 
----
-
 ## Credits
-
 - **ScrollMPRIS** and this **README** were written using AI.  
----
 
 ## License
-
 This project is licensed under the GNU General Public License v3.0. See the [LICENSE](https://github.com/BEST8OY/ScrollMPRIS/blob/main/LICENSE) file for full details.
