@@ -27,6 +27,8 @@ mod mpris {
             ""
         } else if service.contains("telegramdesktop") {
             ""
+        } else if service.contains("tauon") {
+            ""
         } else {
             DEFAULT_ICON
         }
