@@ -293,7 +293,7 @@ fn update_status(
                 },
             }
         } else {
-            format!("{} {}", icon, metadata)
+            format!("{}{}", icon, metadata)
         };
         println!("{}", json!({"text": display_text, "class": class}));
     } else {
