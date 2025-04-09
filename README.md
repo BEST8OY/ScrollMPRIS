@@ -61,11 +61,11 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 ```plaintext
 usage: ScrollMPRIS [options]
     options:
-    -s 50											// Scroll speed (0: slow=1000ms, 100: fast=100ms) – use a value between 0-100
-    -w 40											// Maximum width for the scrolling text
-    -b edge,firefox,mpv								// Block certain players (comma-separated list)
-    --scroll wrapped OR reset						// Choose scrolling behavior: "wrapped" for continuous loop, "reset" to restart after finishing
-    --format "{artist} - {title} - {album}"			// You can use {artist} {title} {album} 
+    -s 50                                            // Scroll speed (0: slow=1000ms, 100: fast=100ms) – use a value between 0-100
+    -w 40                                            // Maximum width for the scrolling text
+    -b edge,firefox,mpv                              // Block certain players (comma-separated list)
+    --scroll wrapped OR reset                        // Choose scrolling behavior: "wrapped" for continuous loop, "reset" to restart after finishing
+    --format "{artist} - {title} - {album}"          // You can use {artist} {title} {album} 
 ```
 Simply pass these options when running the executable to adjust speed, width, blocked players, and scroll mode to your liking.
 
