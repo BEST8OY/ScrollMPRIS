@@ -49,22 +49,32 @@ mod mpris {
         pub playback_status: String,
         pub title: Option<String>,
         pub artist: Option<String>,
+        pub album: Option<String>,
     }
 
     impl MprisPlayer {
-        /// Returns the display icon, metadata, and normalized status.
-        pub fn display_parts(&self) -> (String, String, String) {
+        /// Formats the metadata based on the provided format string.
+        /// Supported placeholders: {title}, {artist}, {album}
+        pub fn formatted_metadata(&self, fmt: &str) -> String {
+            // If the playback status is "stopped", we return an empty string.
+            if self.playback_status.to_lowercase() == "stopped" {
+                return String::new();
+            }
+            let mut result = fmt.to_string();
+            result = result.replace("{title}", self.title.as_deref().unwrap_or(""));
+            result = result.replace("{artist}", self.artist.as_deref().unwrap_or(""));
+            result = result.replace("{album}", self.album.as_deref().unwrap_or(""));
+            result
+        }
+
+        /// Returns the icon and normalized playback status.
+        pub fn icon_and_status(&self) -> (String, String) {
             let status_lower = self.playback_status.to_lowercase();
             if status_lower == "stopped" {
-                return (String::new(), String::new(), status_lower);
+                return (String::new(), status_lower);
             }
             let icon = format!("{} {}", icon_for(&self.service), status_indicator(&status_lower));
-            let metadata = match (&self.title, &self.artist) {
-                (Some(t), Some(a)) => format!("{} - {}", t, a),
-                (Some(t), None)    => t.clone(),
-                _                  => self.playback_status.clone(),
-            };
-            (icon, metadata, status_lower)
+            (icon, status_lower)
         }
     }
 
@@ -73,8 +83,8 @@ mod mpris {
         Connection::new_session().ok()
     }
 
-    /// Extracts the title and artist from the metadata hashmap.
-    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>) -> (Option<String>, Option<String>) {
+    /// Extracts the title, artist, and album from the metadata hashmap.
+    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>) -> (Option<String>, Option<String>, Option<String>) {
         let title = map.get("xesam:title")
             .and_then(|v| v.0.as_str())
             .map(String::from);
@@ -85,7 +95,10 @@ mod mpris {
                     .and_then(|val| val.as_str())
                     .map(String::from)
             });
-        (title, artist)
+        let album = map.get("xesam:album")
+            .and_then(|v| v.0.as_str())
+            .map(String::from);
+        (title, artist, album)
     }
 
     /// Returns a list of active MPRIS players.
@@ -104,8 +117,8 @@ mod mpris {
             let playback_status: String = player_proxy.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus").ok()?;
             let metadata: Option<HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>> =
                 player_proxy.get("org.mpris.MediaPlayer2.Player", "Metadata").ok();
-            let (title, artist) = metadata.as_ref().map_or((None, None), extract_metadata);
-            Some(MprisPlayer { service, playback_status, title, artist })
+            let (title, artist, album) = metadata.as_ref().map_or((None, None, None), extract_metadata);
+            Some(MprisPlayer { service, playback_status, title, artist, album })
         }).collect()
     }
 }
@@ -119,7 +132,7 @@ mod scroll {
         pub offset: usize,
         last_text: String,
     }
-    
+
     impl WrappingState {
         pub fn new() -> Self {
             Self {
@@ -128,7 +141,7 @@ mod scroll {
             }
         }
     }
-    
+
     /// Returns a substring of the padded text using modulo arithmetic.
     /// If the text changes, the scroll state is reinitialized.
     pub fn wrapping(text: &str, state: &mut WrappingState, width: usize) -> String {
@@ -147,14 +160,14 @@ mod scroll {
         state.offset = state.offset.wrapping_add(1);
         frame
     }
-    
+
     /// Holds the state for reset scroll mode.
     pub struct ResetState {
         pub offset: usize,
         pub hold: usize,
         last_text: String,
     }
-    
+
     impl ResetState {
         pub fn new() -> Self {
             Self {
@@ -164,7 +177,7 @@ mod scroll {
             }
         }
     }
-    
+
     /// Scrolls text in reset mode with a fixed delay at the start and end.
     /// If the text changes, the scroll state is reinitialized.
     pub fn reset(text: &str, state: &mut ResetState, width: usize) -> String {
@@ -179,7 +192,7 @@ mod scroll {
         }
         let max_offset = chars.len() - width;
         let frame: String = chars.iter().skip(state.offset).take(width).collect();
-    
+
         if state.offset == 0 || state.offset == max_offset {
             if state.hold < RESET_HOLD {
                 state.hold += 1;
@@ -205,6 +218,7 @@ struct Config {
     width: usize,
     blocked: Vec<String>,
     scroll_mode: ScrollMode,
+    format: String, // New field for metadata formatting.
 }
 
 impl Config {
@@ -215,6 +229,7 @@ impl Config {
             width: 40,
             blocked: Vec::new(),
             scroll_mode: ScrollMode::Wrapping,
+            format: "{title} - {artist}".to_string(), // Default format.
         }
     }
 
@@ -255,6 +270,11 @@ impl Config {
                         };
                     }
                 },
+                "--format" => {
+                    if let Some(fmt) = iter.next() {
+                        config.format = fmt.to_string();
+                    }
+                },
                 _ => {},
             }
         }
@@ -279,23 +299,27 @@ fn update_status(
         !config.blocked.iter()
             .any(|b| p.service.to_lowercase().contains(b))
     }) {
-        let (icon, metadata, norm) = player.display_parts();
+        // Retrieve icon and normalized playback status.
+        let (icon, norm) = player.icon_and_status();
         let class = if norm == "stopped" { "stopped" } else { norm.as_str() };
-        let display_text = if metadata.chars().count() > config.width {
+
+        // Generate metadata using the user-defined format.
+        let formatted = player.formatted_metadata(&config.format);
+        let full_text = if formatted.chars().count() > config.width {
             match config.scroll_mode {
                 ScrollMode::Wrapping => {
-                    let text = scroll::wrapping(&metadata, wrapping_state, config.width);
-                    format!("{} {}", icon, text)
+                    let text = scroll::wrapping(&formatted, wrapping_state, config.width);
+                    format!("{}{}{}", icon, if !icon.is_empty() && !text.is_empty() { " " } else { "" }, text)
                 },
                 ScrollMode::Reset => {
-                    let text = scroll::reset(&metadata, reset_state, config.width);
-                    format!("{} {}", icon, text)
+                    let text = scroll::reset(&formatted, reset_state, config.width);
+                    format!("{}{}{}", icon, if !icon.is_empty() && !text.is_empty() { " " } else { "" }, text)
                 },
             }
         } else {
-            format!("{}{}", icon, metadata)
+            format!("{}{}{}", icon, if !icon.is_empty() && !formatted.is_empty() { " " } else { "" }, formatted)
         };
-        println!("{}", json!({"text": display_text, "class": class}));
+        println!("{}", json!({"text": full_text, "class": class}));
     } else {
         println!("{}", json!({"text": "", "class": "none"}));
     }
