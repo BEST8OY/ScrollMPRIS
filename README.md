@@ -78,14 +78,14 @@ Simply pass these options when running the executable to adjust speed, width, bl
 
 ## Future Enhancements
 - **Customization:** Additional settings
-- 
+  
 ## Contributing
 
 Contributions, feature requests, and issue reports are always welcome!  
-Feel free to open an issue or submit a pull request on our [GitHub issues page](https://github.com/BEST8OY/ScrollMPRIS/issues).
+Feel free to open an issue or submit a pull request.
 
 ## Credits
 - **ScrollMPRIS** and this **README** were written using AI.  
 
 ## License
-This project is licensed under the GNU General Public License v3.0. See the [LICENSE](https://github.com/BEST8OY/ScrollMPRIS/blob/main/LICENSE) file for full details.
+Unlicensed.
