@@ -43,13 +43,21 @@ mod mpris {
         }
     }
 
-    /// Converts a time given in microseconds to a mm:ss formatted string.
+    /// Converts a time given in microseconds to a formatted string.
+    /// If the total duration is more than 60 minutes, it shows hh:mm:ss, otherwise mm:ss.
     pub fn format_position(microseconds: i64) -> String {
         // Convert microseconds to seconds (rounding down)
         let total_seconds = microseconds / 1_000_000;
-        let minutes = total_seconds / 60;
-        let seconds = total_seconds % 60;
-        format!("{:02}:{:02}", minutes, seconds)
+        if total_seconds >= 3600 {
+            let hours = total_seconds / 3600;
+            let minutes = (total_seconds % 3600) / 60;
+            let seconds = total_seconds % 60;
+            format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+        } else {
+            let minutes = total_seconds / 60;
+            let seconds = total_seconds % 60;
+            format!("{:02}:{:02}", minutes, seconds)
+        }
     }
 
     #[derive(Debug, PartialEq, Clone, Copy)]
@@ -114,7 +122,7 @@ mod mpris {
     }
 
     /// Extracts the title, artist, and album from the metadata hashmap.
-    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>)
+    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>) 
         -> (Option<String>, Option<String>, Option<String>) {
         let title = map.get("xesam:title")
             .and_then(|v| v.0.as_str())
