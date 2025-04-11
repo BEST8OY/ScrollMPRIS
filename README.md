@@ -64,10 +64,10 @@ usage: ScrollMPRIS [options]
     -s 50                                                           // Scroll speed (0: slow=1000ms, 100: fast=100ms) – use a value between 0-100
     -w 40                                                           // Maximum width for the scrolling text
     -b edge,firefox,mpv                                             // Block certain players (comma-separated list)
-    -p enable OR disable                                            // enable or disable position
+    -p enable OR disable                                            // Enable or disable position, it's disabled by default
     --scroll wrapped OR reset                                       // Choose scrolling behavior: "wrapped" for continuous loop, "reset" to restart after finishing
     --position-mode increasing OR remaining                         // The default is "increasing".
-    --format '{artist} - {title}'                                   // You can use {artist} {title} {album} ---> Note that you should use quotes not double quotes.
+    --format '{title} - {artist}'                                   // You can use {artist} {title} {album} ---> Note that you should use quotes not double quotes.
 ```
 Simply pass these options when running the executable to adjust speed, width, blocked players, and scroll mode to your liking.
 
