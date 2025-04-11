@@ -66,7 +66,7 @@ usage: ScrollMPRIS [options]
     -b edge,firefox,mpv                                             // Block certain players (comma-separated list)
     --scroll wrapped OR reset                                       // Choose scrolling behavior: "wrapped" for continuous loop, "reset" to restart after finishing
     --position increasing OR remaining                              // The default is "increasing".
-    --format "{artist} - {title}"                                   // You can use {artist} {title} {album} {position}
+    --format '{artist} - {title}'                                   // You can use {artist} {title} {album} {position} ---> Note that you should use quotes not double quotes.
 ```
 Simply pass these options when running the executable to adjust speed, width, blocked players, and scroll mode to your liking.
 
