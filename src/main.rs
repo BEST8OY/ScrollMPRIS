@@ -44,7 +44,7 @@ mod mpris {
     }
 
     /// Converts a time given in microseconds to a formatted string.
-    /// If the total duration is more than 60 minutes, it shows hh:mm:ss, otherwise mm:ss.
+    /// If the total duration is more than 60 minutes, it shows h:mm:ss, otherwise mm:ss.
     pub fn format_position(microseconds: i64) -> String {
         // Convert microseconds to seconds (rounding down)
         let total_seconds = microseconds / 1_000_000;
