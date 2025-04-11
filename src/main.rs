@@ -43,6 +43,21 @@ mod mpris {
         }
     }
 
+    /// Converts a time given in microseconds to a mm:ss formatted string.
+    pub fn format_position(microseconds: i64) -> String {
+        // Convert microseconds to seconds (rounding down)
+        let total_seconds = microseconds / 1_000_000;
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        format!("{:02}:{:02}", minutes, seconds)
+    }
+
+    #[derive(Debug, PartialEq, Clone, Copy)]
+    pub enum PositionMode {
+        Increasing,
+        Remaining,
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone)]
     pub struct MprisPlayer {
         pub service: String,
@@ -50,12 +65,16 @@ mod mpris {
         pub title: Option<String>,
         pub artist: Option<String>,
         pub album: Option<String>,
+        // The raw position in microseconds.
+        pub position: Option<i64>,
+        // The track length in microseconds.
+        pub length: Option<i64>,
     }
 
     impl MprisPlayer {
         /// Formats the metadata based on the provided format string.
-        /// Supported placeholders: {title}, {artist}, {album}
-        pub fn formatted_metadata(&self, fmt: &str) -> String {
+        /// Supported placeholders: {title}, {artist}, {album}, and optionally {position}
+        pub fn formatted_metadata(&self, fmt: &str, pos_mode: PositionMode) -> String {
             // If the playback status is "stopped", we return an empty string.
             if self.playback_status.to_lowercase() == "stopped" {
                 return String::new();
@@ -64,6 +83,17 @@ mod mpris {
             result = result.replace("{title}", self.title.as_deref().unwrap_or(""));
             result = result.replace("{artist}", self.artist.as_deref().unwrap_or(""));
             result = result.replace("{album}", self.album.as_deref().unwrap_or(""));
+
+            let pos_str = match (self.position, self.length) {
+                (Some(pos), Some(len)) if pos_mode == PositionMode::Remaining => {
+                    // Calculate remaining time: length - pos.
+                    let remaining = len.saturating_sub(pos);
+                    format_position(remaining)
+                },
+                (Some(pos), _) => format_position(pos),
+                _ => String::new(),
+            };
+            result = result.replace("{position}", &pos_str);
             result
         }
 
@@ -84,7 +114,8 @@ mod mpris {
     }
 
     /// Extracts the title, artist, and album from the metadata hashmap.
-    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>) -> (Option<String>, Option<String>, Option<String>) {
+    fn extract_metadata(map: &HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>)
+        -> (Option<String>, Option<String>, Option<String>) {
         let title = map.get("xesam:title")
             .and_then(|v| v.0.as_str())
             .map(String::from);
@@ -115,10 +146,26 @@ mod mpris {
         player_names.into_iter().filter_map(|service| {
             let player_proxy = conn.with_proxy(&service, "/org/mpris/MediaPlayer2", TIMEOUT);
             let playback_status: String = player_proxy.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus").ok()?;
+            // Retrieve metadata for title, artist, album, and length.
             let metadata: Option<HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>> =
                 player_proxy.get("org.mpris.MediaPlayer2.Player", "Metadata").ok();
             let (title, artist, album) = metadata.as_ref().map_or((None, None, None), extract_metadata);
-            Some(MprisPlayer { service, playback_status, title, artist, album })
+            let length: Option<i64> = metadata.as_ref()
+                .and_then(|map| map.get("mpris:length"))
+                .and_then(|v| v.0.as_i64());
+            // Retrieve the Position property as raw microseconds.
+            let position: Option<i64> = player_proxy
+                .get("org.mpris.MediaPlayer2.Player", "Position")
+                .ok();
+            Some(MprisPlayer {
+                service,
+                playback_status,
+                title,
+                artist,
+                album,
+                position,
+                length,
+            })
         }).collect()
     }
 }
@@ -213,12 +260,15 @@ enum ScrollMode {
     Reset,
 }
 
+use mpris::PositionMode;
+
 struct Config {
     delay: u64,
     width: usize,
     blocked: Vec<String>,
     scroll_mode: ScrollMode,
-    format: String, // New field for metadata formatting.
+    format: String, // Field for metadata formatting.
+    position_mode: PositionMode, // New field for position mode.
 }
 
 impl Config {
@@ -230,6 +280,7 @@ impl Config {
             blocked: Vec::new(),
             scroll_mode: ScrollMode::Wrapping,
             format: "{title} - {artist}".to_string(), // Default format.
+            position_mode: PositionMode::Increasing,
         }
     }
 
@@ -275,6 +326,14 @@ impl Config {
                         config.format = fmt.to_string();
                     }
                 },
+                "--position" => {
+                    if let Some(mode) = iter.next() {
+                        config.position_mode = match mode.to_lowercase().as_str() {
+                            "remaining" => PositionMode::Remaining,
+                            _ => PositionMode::Increasing,
+                        };
+                    }
+                },
                 _ => {},
             }
         }
@@ -303,8 +362,8 @@ fn update_status(
         let (icon, norm) = player.icon_and_status();
         let class = if norm == "stopped" { "stopped" } else { norm.as_str() };
 
-        // Generate metadata using the user-defined format.
-        let formatted = player.formatted_metadata(&config.format);
+        // Generate metadata using the user-defined format and position mode.
+        let formatted = player.formatted_metadata(&config.format, config.position_mode);
         let full_text = if formatted.chars().count() > config.width {
             match config.scroll_mode {
                 ScrollMode::Wrapping => {
