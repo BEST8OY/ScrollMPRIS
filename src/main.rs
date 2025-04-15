@@ -167,23 +167,46 @@ fn main() -> Result<()> {
             thread::sleep(Duration::from_millis(config_timer.delay));
             let mut player_guard = current_player_timer.lock().unwrap();
             if let Some(ref player) = *player_guard {
-                if player.playback_status.to_lowercase() == "playing" && config_timer.position_enabled {
-                    // Re-fetch the player to get updated position
-                    if let Some(updated_player) = mpris::get_player_by_service(&player.service) {
-                        let position_changed = updated_player.position != last_position;
-                        let status_changed = updated_player.playback_status != last_status.clone().unwrap_or_default();
-                        if position_changed || status_changed {
-                            last_position = updated_player.position;
-                            last_status = Some(updated_player.playback_status.clone());
-                            *player_guard = Some(updated_player.clone());
-                            print_status(
-                                &config_timer,
-                                &updated_player,
-                                &mut reset_state_timer.lock().unwrap(),
-                                &mut wrapping_state_timer.lock().unwrap(),
-                                &last_output_timer,
-                            );
+                if player.playback_status.to_lowercase() == "playing" {
+                    // Re-fetch the player to get updated position if enabled
+                    let updated_player = if config_timer.position_enabled {
+                        mpris::get_player_by_service(&player.service)
+                    } else {
+                        None
+                    };
+                    let (position_changed, status_changed) = if let Some(ref updated) = updated_player {
+                        (
+                            updated.position != last_position,
+                            updated.playback_status != last_status.clone().unwrap_or_default(),
+                        )
+                    } else {
+                        (false, player.playback_status != last_status.clone().unwrap_or_default())
+                    };
+                    if config_timer.position_enabled {
+                        if let Some(updated_player) = updated_player {
+                            if position_changed || status_changed {
+                                last_position = updated_player.position;
+                                last_status = Some(updated_player.playback_status.clone());
+                                *player_guard = Some(updated_player.clone());
+                                print_status(
+                                    &config_timer,
+                                    &updated_player,
+                                    &mut reset_state_timer.lock().unwrap(),
+                                    &mut wrapping_state_timer.lock().unwrap(),
+                                    &last_output_timer,
+                                );
+                            }
                         }
+                    } else {
+                        // Always call print_status for scrolling
+                        print_status(
+                            &config_timer,
+                            player,
+                            &mut reset_state_timer.lock().unwrap(),
+                            &mut wrapping_state_timer.lock().unwrap(),
+                            &last_output_timer,
+                        );
+                        last_status = Some(player.playback_status.clone());
                     }
                 }
             }
