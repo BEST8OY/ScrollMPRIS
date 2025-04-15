@@ -45,7 +45,9 @@ fn print_status(
         String::new()
     };
 
-    let output = if !icon.is_empty() && !scrolled_text.is_empty() {
+    let output = if config.no_icon {
+        format!("{}{}", scrolled_text, position_text)
+    } else if !icon.is_empty() && !scrolled_text.is_empty() {
         format!("{} {}{}", icon, scrolled_text, position_text)
     } else {
         format!("{}{}", icon, scrolled_text)

@@ -63,10 +63,11 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 | `--scroll <wrapping OR reset>`   | Choose scrolling behavior: `wrapping` for continuous loop, `reset` to restart after finish  | `--scroll wrapping`                      |
 | `--position-mode <mode>`      | Position style: `increasing` (elapsed) or `remaining` (time left)                           | `--position-mode remaining`              |
 | `--format <string>`           | Metadata format (supports `{title}`, `{artist}`, `{album}`)                                 | `--format '{title} - {artist}'`          |
+| `--no-icon`                   | Disable icon in output                                                                        | `--no-icon`                              |
 
 **Examples:**
 ```bash
-./ScrollMPRIS -s 50 -w 40 -b edge,firefox,mpv --scroll wrapping --position --position-mode remaining --format '{title} - {artist}'
+./ScrollMPRIS -s 50 -w 40 -b edge,firefox,mpv --scroll wrapping --position --position-mode remaining --format '{title} - {artist}' --no-icon
 ```
 
 - To enable position display, simply add `-p` or `--position` (no value needed).

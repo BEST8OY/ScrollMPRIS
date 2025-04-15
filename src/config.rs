@@ -36,6 +36,10 @@ pub struct Config {
     #[arg(short = 'p', long = "position", default_value_t = false, action = clap::ArgAction::SetTrue)]
     pub position_enabled: bool,
 
+    /// Disable icon in output
+    #[arg(long = "no-icon", default_value_t = false, action = clap::ArgAction::SetTrue)]
+    pub no_icon: bool,
+
     /// Position style: "increasing" or "remaining"
     #[arg(long = "position-mode", default_value = "increasing")]
     pub position_mode: PositionMode,
