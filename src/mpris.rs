@@ -60,13 +60,13 @@ pub fn format_position(microseconds: i64) -> String {
 /// Mode for displaying track position.
 #[derive(Debug, PartialEq, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
 pub enum PositionMode {
-    /// Show increasing position (elapsed time)
+    /// Show elapsed time
     Increasing,
     /// Show remaining time
     Remaining,
 }
 
-/// Represents an active MPRIS player and its metadata.
+/// Metadata and playback state for a player.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MprisPlayer {
     pub service: String,
@@ -74,14 +74,12 @@ pub struct MprisPlayer {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
-    /// Position in microseconds.
     pub position: Option<i64>,
-    /// Track duration in microseconds.
     pub length: Option<i64>,
 }
 
 impl MprisPlayer {
-    /// Creates metadata text based on a custom format containing {title}, {artist}, or {album}.
+    /// Format metadata using a custom string.
     pub fn formatted_metadata(&self, fmt: &str) -> String {
         if self.playback_status.to_lowercase() == "stopped" {
             return String::new();
@@ -157,7 +155,7 @@ impl MprisPlayer {
         output.trim().to_string()
     }
 
-    /// Returns a formatted position based on the selected mode.
+    /// Get formatted position string.
     pub fn get_position(&self, mode: PositionMode) -> String {
         match (self.position, self.length) {
             (Some(pos), Some(len)) if mode == PositionMode::Remaining => {
@@ -169,7 +167,7 @@ impl MprisPlayer {
         }
     }
 
-    /// Combines the service icon and playback status into a single string.
+    /// Get icon and status string.
     pub fn icon_and_status(&self) -> (String, String) {
         let status_lower = self.playback_status.to_lowercase();
         if status_lower == "stopped" {
@@ -207,6 +205,9 @@ fn extract_metadata(
 }
 
 /// Returns a list of active MPRIS players available through D-Bus.
+///
+/// # Returns
+/// A vector of MprisPlayer instances for all active players.
 pub fn active_players() -> Vec<MprisPlayer> {
     let conn = match connection() {
         Some(c) => c,
@@ -249,7 +250,12 @@ pub fn active_players() -> Vec<MprisPlayer> {
 }
 
 /// Fetch a player by its D-Bus service name.
-#[allow(dead_code)]
+///
+/// # Arguments
+/// * `service` - The D-Bus service name.
+///
+/// # Returns
+/// An Option containing the MprisPlayer if found.
 pub fn get_player_by_service(service: &str) -> Option<MprisPlayer> {
     // Establish a D-Bus session connection
     let conn = connection()?;
