@@ -9,7 +9,7 @@ pub enum ScrollMode {
 }
 
 /// Configuration for ScrollMPRIS, parsed from command-line arguments.
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Config {
     /// Scroll speed (0: slow=1000ms, 100: fast=100ms)
