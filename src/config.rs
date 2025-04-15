@@ -46,14 +46,18 @@ pub struct Config {
 }
 
 impl Config {
+    /// Parse command-line arguments and calculate derived fields.
     pub fn parse() -> Self {
         let mut config = <Self as Parser>::parse();
-        // Calculate delay from speed
+        // Calculate delay from speed (speed 0 = 1000ms, speed 100 = 100ms)
         config.delay = (1000u64)
             .saturating_sub((config.speed as u64).saturating_mul(9))
             .max(100);
         // Normalize blocked list
-        config.blocked = config.blocked.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
+        config.blocked = config.blocked.iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
         config
     }
 }

@@ -53,6 +53,16 @@ fn print_status(
     println!("{}", serde_json::json!({"text": output, "class": class}));
 }
 
+/// Select the first non-blocked player.
+fn select_player(config: &Config) -> Option<MprisPlayer> {
+    active_players().into_iter().find(|p| {
+        !config
+            .blocked
+            .iter()
+            .any(|b| p.service.to_lowercase().contains(b))
+    })
+}
+
 fn main() -> Result<()> {
     let config = Config::parse();
     let reset_state = Arc::new(Mutex::new(ResetState::new()));
@@ -61,41 +71,21 @@ fn main() -> Result<()> {
     let conn = Connection::new_session()?;
 
     // Shared state for the currently active player
-    let current_player = Arc::new(Mutex::new(None::<MprisPlayer>));
+    let current_player = Arc::new(Mutex::new(select_player(&config)));
     let config_arc = Arc::new(config);
-
-    // Helper to select the first non-blocked player
-    let select_player = |config: &Config| -> Option<MprisPlayer> {
-        active_players().into_iter().find(|p| {
-            !config
-                .blocked
-                .iter()
-                .any(|b| p.service.to_lowercase().contains(b))
-        })
-    };
-
-    // Initial player selection
-    {
-        let mut player_guard = current_player.lock().unwrap();
-        *player_guard = select_player(&config_arc);
-    }
 
     // Print initial status
     {
         let player_guard = current_player.lock().unwrap();
-        if let Ok(player_guard) = current_player.lock() {
-            if let Some(ref player) = *player_guard {
+        if let Some(ref player) = *player_guard {
             print_status(
                 &config_arc,
                 player,
                 &mut reset_state.lock().unwrap(),
                 &mut wrapping_state.lock().unwrap(),
             );
-            } else {
-                println!("{}", serde_json::json!({"text": "", "class": "none"}));
-            }
         } else {
-            eprintln!("Failed to acquire lock on current_player");
+            println!("{}", serde_json::json!({"text": "", "class": "none"}));
         }
     }
 
@@ -110,12 +100,7 @@ fn main() -> Result<()> {
     conn.add_match(match_rule, move |_signal: PropertiesPropertiesChanged, _conn, _msg_info| {
         // On any property change, refresh player list and select the active one
         let mut player_guard = current_player_signal.lock().unwrap();
-        let new_player = active_players().into_iter().find(|p| {
-            !config_signal
-                .blocked
-                .iter()
-                .any(|b| p.service.to_lowercase().contains(b))
-        });
+        let new_player = select_player(&config_signal);
         let changed = match (&*player_guard, &new_player) {
             (Some(old), Some(new)) => {
                 old.service != new.service ||
