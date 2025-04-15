@@ -67,7 +67,7 @@ pub enum PositionMode {
 }
 
 /// Represents an active MPRIS player and its metadata.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MprisPlayer {
     pub service: String,
     pub playback_status: String,
@@ -246,4 +246,34 @@ pub fn active_players() -> Vec<MprisPlayer> {
             })
         })
         .collect()
+}
+
+/// Fetch a player by its D-Bus service name.
+#[allow(dead_code)]
+pub fn get_player_by_service(service: &str) -> Option<MprisPlayer> {
+    // Establish a D-Bus session connection
+    let conn = connection()?;
+    let player_proxy = conn.with_proxy(service, "/org/mpris/MediaPlayer2", TIMEOUT);
+    let playback_status: String = player_proxy.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus").ok()?;
+    let metadata: Option<HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>> =
+        player_proxy.get("org.mpris.MediaPlayer2.Player", "Metadata").ok();
+    let (title, artist, album) = metadata
+        .as_ref()
+        .map_or((None, None, None), extract_metadata);
+    let length: Option<i64> = metadata
+        .as_ref()
+        .and_then(|map| map.get("mpris:length"))
+        .and_then(|v| v.0.as_i64());
+    let position: Option<i64> = player_proxy
+        .get("org.mpris.MediaPlayer2.Player", "Position")
+        .ok();
+    Some(MprisPlayer {
+        service: service.to_string(),
+        playback_status,
+        title,
+        artist,
+        album,
+        position,
+        length,
+    })
 }
