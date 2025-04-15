@@ -60,7 +60,7 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 | `-w`, `--width <number>`      | Maximum width for the scrolling text                                                        | `-w 40`                                  |
 | `-b`, `--blocked <list>`      | Block certain players (comma-separated, case-insensitive)                                   | `-b edge,firefox,mpv`                    |
 | `-p`, `--position`            | Enable position display (show track time info)                                              | `-p` or `--position`                     |
-| `--scroll <wrapping|reset>`   | Choose scrolling behavior: `wrapping` for continuous loop, `reset` to restart after finish  | `--scroll wrapping`                      |
+| `--scroll <wrapping OR reset>`   | Choose scrolling behavior: `wrapping` for continuous loop, `reset` to restart after finish  | `--scroll wrapping`                      |
 | `--position-mode <mode>`      | Position style: `increasing` (elapsed) or `remaining` (time left)                           | `--position-mode remaining`              |
 | `--format <string>`           | Metadata format (supports `{title}`, `{artist}`, `{album}`)                                 | `--format '{title} - {artist}'`          |
 
@@ -75,9 +75,11 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 ## Preview
 
 **Reset mode:**
+
 ![Reset mode](https://github.com/user-attachments/assets/5a151c83-394d-4f12-9660-6f248de1a71d)
 
 **Wrapped mode:**
+
 ![Wrapped mode](https://github.com/user-attachments/assets/c72cc4be-3385-4a53-8848-7c292e12e400)
 
 
