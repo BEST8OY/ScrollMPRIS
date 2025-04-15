@@ -160,8 +160,9 @@ fn spawn_timer_thread(
             std::thread::sleep(Duration::from_millis(config.delay));
             let mut current_player_timer = current_player.lock().unwrap();
             if let Some(ref player) = *current_player_timer {
-                if player.playback_status.to_lowercase() == "playing" {
-                    let updated_player = if config.position_enabled {
+                let status = player.playback_status.to_lowercase();
+                if status == "playing" || status == "paused" {
+                    let updated_player = if config.position_enabled && status == "playing" {
                         mpris::get_player_by_service(&player.service)
                     } else {
                         None
@@ -174,7 +175,7 @@ fn spawn_timer_thread(
                     } else {
                         (false, player.playback_status != last_status.clone().unwrap_or_default())
                     };
-                    if config.position_enabled {
+                    if config.position_enabled && status == "playing" {
                         if let Some(updated_player) = updated_player {
                             if position_changed || status_changed {
                                 last_position = updated_player.position;
