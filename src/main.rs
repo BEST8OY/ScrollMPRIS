@@ -14,12 +14,13 @@ use scroll::{reset, wrapping, ResetState, WrappingState};
 use dbus::blocking::{Connection, stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged};
 use dbus::message::MatchRule;
 
-/// Print status for the current player.
+/// Print status for the current player, only if output changes.
 fn print_status(
     config: &Config,
     player: &MprisPlayer,
     reset_state: &mut ResetState,
     wrapping_state: &mut WrappingState,
+    last_output: &Arc<Mutex<String>>,
 ) {
     let (icon, normalized_status) = player.icon_and_status();
     let class = if normalized_status == "stopped" {
@@ -52,7 +53,12 @@ fn print_status(
     } else {
         format!("{}{}", icon, scrolled_text)
     };
-    println!("{}", serde_json::json!({"text": output, "class": class}));
+    let json_output = serde_json::json!({"text": output, "class": class}).to_string();
+    let mut last = last_output.lock().unwrap();
+    if *last != json_output {
+        println!("{}", json_output);
+        *last = json_output;
+    }
 }
 
 /// Select the first non-blocked player.
@@ -69,12 +75,14 @@ fn main() -> Result<()> {
     let config = Config::parse();
     let reset_state = Arc::new(Mutex::new(ResetState::new()));
     let wrapping_state = Arc::new(Mutex::new(WrappingState::new()));
+    let last_output = Arc::new(Mutex::new(String::new()));
 
     let conn = Connection::new_session()?;
 
     // Shared state for the currently active player
     let current_player = Arc::new(Mutex::new(select_player(&config)));
     let config_arc = Arc::new(config);
+    let last_output_arc = Arc::clone(&last_output);
 
     // Print initial status
     {
@@ -85,9 +93,15 @@ fn main() -> Result<()> {
                 player,
                 &mut reset_state.lock().unwrap(),
                 &mut wrapping_state.lock().unwrap(),
+                &last_output_arc,
             );
         } else {
-            println!("{}", serde_json::json!({"text": "", "class": "none"}));
+            let mut last = last_output_arc.lock().unwrap();
+            let json_output = serde_json::json!({"text": "", "class": "none"}).to_string();
+            if *last != json_output {
+                println!("{}", json_output);
+                *last = json_output;
+            }
         }
     }
 
@@ -98,6 +112,7 @@ fn main() -> Result<()> {
     let config_signal = Arc::clone(&config_arc);
     let reset_state_signal = Arc::clone(&reset_state);
     let wrapping_state_signal = Arc::clone(&wrapping_state);
+    let last_output_signal = Arc::clone(&last_output);
 
     conn.add_match(match_rule, move |_signal: PropertiesPropertiesChanged, _conn, _msg_info| {
         // On any property change, refresh player list and select the active one
@@ -125,9 +140,15 @@ fn main() -> Result<()> {
                 player,
                 &mut reset_state_signal.lock().unwrap(),
                 &mut wrapping_state_signal.lock().unwrap(),
+                &last_output_signal,
             );
         } else {
-            println!("{}", serde_json::json!({"text": "", "class": "none"}));
+            let mut last = last_output_signal.lock().unwrap();
+            let json_output = serde_json::json!({"text": "", "class": "none"}).to_string();
+            if *last != json_output {
+                println!("{}", json_output);
+                *last = json_output;
+            }
         }
         true
     })?;
@@ -137,8 +158,11 @@ fn main() -> Result<()> {
     let config_timer = Arc::clone(&config_arc);
     let reset_state_timer = Arc::clone(&reset_state);
     let wrapping_state_timer = Arc::clone(&wrapping_state);
+    let last_output_timer = Arc::clone(&last_output);
 
     thread::spawn(move || {
+        let mut last_position: Option<i64> = None;
+        let mut last_status: Option<String> = None;
         loop {
             thread::sleep(Duration::from_millis(config_timer.delay));
             let mut player_guard = current_player_timer.lock().unwrap();
@@ -146,13 +170,20 @@ fn main() -> Result<()> {
                 if player.playback_status.to_lowercase() == "playing" && config_timer.position_enabled {
                     // Re-fetch the player to get updated position
                     if let Some(updated_player) = mpris::get_player_by_service(&player.service) {
-                        *player_guard = Some(updated_player.clone());
-                        print_status(
-                            &config_timer,
-                            &updated_player,
-                            &mut reset_state_timer.lock().unwrap(),
-                            &mut wrapping_state_timer.lock().unwrap(),
-                        );
+                        let position_changed = updated_player.position != last_position;
+                        let status_changed = updated_player.playback_status != last_status.clone().unwrap_or_default();
+                        if position_changed || status_changed {
+                            last_position = updated_player.position;
+                            last_status = Some(updated_player.playback_status.clone());
+                            *player_guard = Some(updated_player.clone());
+                            print_status(
+                                &config_timer,
+                                &updated_player,
+                                &mut reset_state_timer.lock().unwrap(),
+                                &mut wrapping_state_timer.lock().unwrap(),
+                                &last_output_timer,
+                            );
+                        }
                     }
                 }
             }
