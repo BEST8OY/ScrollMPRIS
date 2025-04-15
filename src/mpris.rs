@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use dbus::blocking::{Connection, stdintf::org_freedesktop_dbus::Properties};
 use serde::{Deserialize, Serialize};
+use regex::Regex;
 
 /// Default icon for unknown services.
 const DEFAULT_ICON: &str = "";
@@ -85,9 +86,75 @@ impl MprisPlayer {
         if self.playback_status.to_lowercase() == "stopped" {
             return String::new();
         }
-        fmt.replace("{title}", self.title.as_deref().unwrap_or(""))
-            .replace("{artist}", self.artist.as_deref().unwrap_or(""))
-            .replace("{album}", self.album.as_deref().unwrap_or(""))
+
+        let title = self.title.as_deref().unwrap_or("").trim();
+        let artist = self.artist.as_deref().unwrap_or("").trim();
+        let album = self.album.as_deref().unwrap_or("").trim();
+
+        let re = Regex::new(r"\{(title|artist|album)\}").unwrap();
+
+        // Split format string into segments: text and placeholders
+        let mut segments = Vec::new();
+        let mut last = 0;
+        for cap in re.captures_iter(fmt) {
+            let m = cap.get(0).unwrap();
+            let key = cap.get(1).unwrap().as_str();
+            let value = match key {
+                "title" => title,
+                "artist" => artist,
+                "album" => album,
+                _ => "",
+            };
+            // Text before this placeholder
+            segments.push((fmt[last..m.start()].to_string(), None));
+            // The placeholder value
+            segments.push(("".to_string(), Some(value)));
+            last = m.end();
+        }
+        // Trailing text after last placeholder
+        if last < fmt.len() {
+            segments.push((fmt[last..].to_string(), None));
+        }
+
+        // Build output, skipping separators if adjacent field is missing
+        let mut output = String::new();
+        let mut prev_field_present = false;
+        let mut i = 0;
+        while i < segments.len() {
+            let (ref text, ref field_opt) = segments[i];
+            if let Some(field) = field_opt {
+                if !field.is_empty() {
+                    output.push_str(field);
+                    prev_field_present = true;
+                } else {
+                    prev_field_present = false;
+                }
+                i += 1;
+            } else {
+                // This is a separator/prefix/suffix
+                // Only add if:
+                // - It's the very first segment (prefix), or
+                // - It's the very last segment (suffix), or
+                // - Both previous and next fields are present
+                let is_first = i == 0;
+                let is_last = i == segments.len() - 1;
+                let next_field_present = if i + 1 < segments.len() {
+                    if let Some(Some(field)) = segments.get(i + 1).map(|(_, f)| *f) {
+                        !field.is_empty()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if is_first || is_last || (prev_field_present && next_field_present) {
+                    output.push_str(text);
+                }
+                i += 1;
+            }
+        }
+
+        output.trim().to_string()
     }
 
     /// Returns a formatted position based on the selected mode.
