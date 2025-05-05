@@ -60,10 +60,12 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 | `-w`, `--width <number>`      | Maximum width for the scrolling text                                                        | `-w 40`                                  |
 | `-b`, `--blocked <list>`      | Block certain players (comma-separated, case-insensitive)                                   | `-b edge,firefox,mpv`                    |
 | `-p`, `--position`            | Enable position display (show track time info)                                              | `-p` or `--position`                     |
-| `--scroll <wrapping OR reset>`   | Choose scrolling behavior: `wrapping` for continuous loop, `reset` to restart after finish  | `--scroll wrapping`                      |
+| `--scroll <wrapping OR reset>`| Choose scrolling behavior: `wrapping` for continuous loop, `reset` to restart after finish  | `--scroll wrapping`                      |
 | `--position-mode <mode>`      | Position style: `increasing` (elapsed) or `remaining` (time left)                           | `--position-mode remaining`              |
 | `--format <string>`           | Metadata format (supports `{title}`, `{artist}`, `{album}`)                                 | `--format '{title} - {artist}'`          |
-| `--no-icon`                   | Disable icon in output                                                                        | `--no-icon`                              |
+| `--no-icon`                   | Disable icon in output                                                                      | `--no-icon`                              |
+| `--freeze`                    | Pause scroll when playback is paused                                                        | `--freeze`                               |
+
 
 **Examples:**
 ```bash
