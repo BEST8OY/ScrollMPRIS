@@ -33,15 +33,23 @@ fn print_status(
     };
 
     let static_text = player.formatted_metadata(&config.format);
-    let scrolled_text = scroll(
-        &static_text,
-        scroll_state,
-        config.width,
-        match config.scroll_mode {
-            config::ScrollMode::Wrapping => ScrollMode::Wrapping,
-            config::ScrollMode::Reset => ScrollMode::Reset,
-        },
-    );
+    let scrolled_text = if config.freeze_on_pause && normalized_status == "paused" {
+        // Reset scroll state and show static text if freeze flag is set and player is paused
+        scroll_state.offset = 0;
+        scroll_state.hold = 0;
+        static_text.chars().take(config.width).collect::<String>()
+    } else {
+        // Otherwise, scroll normally (even if paused, if freeze flag is not set)
+        scroll(
+            &static_text,
+            scroll_state,
+            config.width,
+            match config.scroll_mode {
+                config::ScrollMode::Wrapping => ScrollMode::Wrapping,
+                config::ScrollMode::Reset => ScrollMode::Reset,
+            },
+        )
+    };
 
     let position_text = if config.position_enabled {
         let pos_text = player.get_position(config.position_mode);

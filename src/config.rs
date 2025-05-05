@@ -30,6 +30,9 @@ pub struct Config {
     /// Position style: "increasing" or "remaining"
     #[arg(long = "position-mode", default_value = "increasing")]
     pub position_mode: PositionMode,
+/// Freeze scrolling and reset text when paused
+    #[arg(long = "freeze", default_value_t = false, action = clap::ArgAction::SetTrue)]
+    pub freeze_on_pause: bool,
     /// Delay in milliseconds (from speed)
     #[arg(skip)]
     pub delay: u64,
