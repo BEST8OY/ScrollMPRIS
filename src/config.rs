@@ -1,5 +1,13 @@
 use clap::{Parser};
-use crate::mpris::PositionMode;
+
+/// Position display mode for track time.
+#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
+pub enum PositionMode {
+    /// Show increasing time (elapsed)
+    Increasing,
+    /// Show remaining time
+    Remaining,
+}
 pub use crate::scroll::ScrollMode;
 
 /// Configuration parsed from command-line arguments.
