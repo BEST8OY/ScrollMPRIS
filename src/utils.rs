@@ -90,11 +90,17 @@ pub fn print_status(
     scroll_state: &mut ScrollState,
     last_output: &mut String,
 ) {
-    // Check if there's any actual metadata. If not, output nothing.
+    // If there's no metadata, output a stopped status.
     if player_state.title.is_empty() && player_state.artist.is_empty() && player_state.album.is_empty() {
-        if !last_output.is_empty() {
-            println!();
-            *last_output = String::new();
+        let json_output = serde_json::json!({
+            "text": "",
+            "class": "stopped",
+        })
+        .to_string();
+
+        if *last_output != json_output {
+            println!("{}", json_output);
+            *last_output = json_output;
         }
         return;
     }
@@ -118,14 +124,12 @@ pub fn print_status(
         return;
     }
 
-    let class = if player_state.playing {
-        "playing"
-    } else {
-        "paused"
-    };
+    let class = &player_state.status.to_lowercase();
     let position_text = get_position_text(config, player_state);
 
-    let output = if config.no_icon {
+    let output = if class == &"stopped".to_string() {
+        String::new()
+    } else if config.no_icon {
         format!("{}{}", scrolled_text, position_text)
     } else {
         let icon = get_icon(player_state);

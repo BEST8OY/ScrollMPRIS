@@ -9,6 +9,7 @@ pub struct PlayerState {
     pub artist: String,
     pub album: String,
     pub playing: bool,
+    pub status: String,
     pub position: f64,
     pub err: Option<String>,
     pub last_position: f64,
@@ -37,8 +38,9 @@ impl PlayerState {
     pub fn get_service(&self) -> Option<&str> {
         self.service.as_deref()
     }
-    pub fn update_playback_dbus(&mut self, playing: bool, position: f64) {
-        self.playing = playing;
+    pub fn update_playback_dbus(&mut self, playback_status: String, position: f64) {
+        self.playing = playback_status == "Playing";
+        self.status = playback_status;
         self.last_position = position;
         self.last_update = Some(Instant::now());
         self.position = position;

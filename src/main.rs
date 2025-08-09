@@ -38,8 +38,7 @@ async fn main() -> Result<()> {
                     let mut player_state = player_state1.lock().unwrap();
                     player_state.update_from_metadata(&meta);
                     player_state.set_service(&service);
-                    let is_playing = playback_status == "Playing";
-                    player_state.update_playback_dbus(is_playing, pos);
+                    player_state.update_playback_dbus(playback_status.to_string(), pos);
                     let _ = tx1.try_send(());
                 },
                 move |_meta, pos, _service| {
