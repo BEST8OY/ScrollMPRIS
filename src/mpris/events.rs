@@ -153,6 +153,17 @@ where
                         if *service != self.current_service {
                             self.update_current_player(service).await?;
                         }
+                    } else {
+                        // No available player: reset state and trigger output update
+                        self.current_service.clear();
+                        self.last_track = crate::mpris::metadata::TrackMetadata::default();
+                        self.last_playback_status.clear();
+                        (self.on_track_change)(
+                            crate::mpris::metadata::TrackMetadata::default(),
+                            0.0,
+                            String::new(),
+                            String::new(),
+                        );
                     }
                 }
             }
