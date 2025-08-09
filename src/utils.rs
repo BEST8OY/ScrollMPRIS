@@ -1,29 +1,87 @@
+use crate::config::{Config, PositionMode, ScrollMode as ConfigScrollMode};
+use crate::player::PlayerState;
+use crate::scroll::{scroll, ScrollMode, ScrollState};
+
 /// Picks an icon that represents the service based on its name.
 pub fn icon_for(service: &str) -> &'static str {
     let service = service.to_lowercase();
-    if service.contains("spotify") {
-        ""
-    } else if service.contains("vlc") {
-        "󰕼"
-    } else if service.contains("edge") {
-        "󰇩"
-    } else if service.contains("firefox") {
-        "󰈹"
-    } else if service.contains("mpv") {
-        ""
-    } else if service.contains("chrome") {
-        ""
-    } else if service.contains("telegramdesktop") {
-        ""
-    } else if service.contains("tauon") {
-        ""
-    } else {
-        ""
+    match service {
+        s if s.contains("spotify") => "",
+        s if s.contains("vlc") => "󰕼",
+        s if s.contains("edge") => "󰇩",
+        s if s.contains("firefox") => "󰈹",
+        s if s.contains("mpv") => "",
+        s if s.contains("chrome") => "",
+        s if s.contains("telegramdesktop") => "",
+        s if s.contains("tauon") => "",
+        _ => "",
     }
 }
-use crate::config::{Config, ScrollMode as ConfigScrollMode, PositionMode};
-use crate::scroll::{scroll, ScrollMode, ScrollState};
-use crate::player::PlayerState;
+
+fn format_metadata(format: &str, title: &str, artist: &str, album: &str) -> String {
+    format
+        .replace("{title}", title.trim())
+        .replace("{artist}", artist.trim())
+        .replace("{album}", album.trim())
+        .trim()
+        .to_string()
+}
+
+fn get_icon(player_state: &PlayerState) -> String {
+    let service_icon = player_state.get_service().map(icon_for).unwrap_or("");
+    let play_icon = if player_state.playing { "" } else { "" };
+
+    if !service_icon.is_empty() {
+        format!("{} {}", service_icon, play_icon)
+    } else {
+        play_icon.to_string()
+    }
+}
+
+fn get_scrolled_text(
+    config: &Config,
+    player_state: &PlayerState,
+    scroll_state: &mut ScrollState,
+    formatted_metadata: &str,
+) -> String {
+    if config.freeze_on_pause && !player_state.playing {
+        scroll_state.offset = 0;
+        scroll_state.hold = 0;
+        formatted_metadata.chars().take(config.width).collect()
+    } else {
+        scroll(
+            formatted_metadata,
+            scroll_state,
+            config.width,
+            match config.scroll_mode {
+                ConfigScrollMode::Wrapping => ScrollMode::Wrapping,
+                ConfigScrollMode::Reset => ScrollMode::Reset,
+            },
+        )
+    }
+}
+
+fn get_position_text(config: &Config, player_state: &PlayerState) -> String {
+    if !config.position_enabled {
+        return String::new();
+    }
+
+    let seconds = match config.position_mode {
+        PositionMode::Increasing => player_state.estimate_position(),
+        PositionMode::Remaining => player_state
+            .length
+            .map_or(player_state.estimate_position(), |length| {
+                (length - player_state.estimate_position()).max(0.0)
+            }),
+    };
+
+    let pos_text = format_position(seconds);
+    if !pos_text.is_empty() {
+        format!(" {}", pos_text)
+    } else {
+        String::new()
+    }
+}
 
 /// Print status for the current player, only if output changes.
 pub fn print_status(
@@ -32,60 +90,54 @@ pub fn print_status(
     scroll_state: &mut ScrollState,
     last_output: &mut String,
 ) {
-    // Combine service icon and play/pause icon
-    let service_icon = player_state.get_service().map(icon_for).unwrap_or("");
-    let play_icon = if player_state.playing { "" } else { "" };
-    let icon = if !service_icon.is_empty() {
-        format!("{} {}", service_icon, play_icon)
-    } else {
-        play_icon.to_string()
-    };
-    let class = if player_state.playing { "playing" } else { "paused" };
-    let static_text = format!("{} - {}", player_state.title, player_state.artist);
-    let scrolled_text = if config.freeze_on_pause && !player_state.playing {
-        scroll_state.offset = 0;
-        scroll_state.hold = 0;
-        static_text.chars().take(config.width).collect::<String>()
-    } else {
-        scroll(
-            &static_text,
-            scroll_state,
-            config.width,
-            match config.scroll_mode {
-                ConfigScrollMode::Wrapping => ScrollMode::Wrapping,
-                ConfigScrollMode::Reset => ScrollMode::Reset,
-            },
-        )
-    };
-    let position_text = if config.position_enabled {
-        let seconds = match config.position_mode {
-            PositionMode::Increasing => player_state.estimate_position(),
-            PositionMode::Remaining => {
-                if let Some(length) = player_state.length {
-                    let rem = length - player_state.estimate_position();
-                    if rem > 0.0 { rem } else { 0.0 }
-                } else {
-                    player_state.estimate_position()
-                }
-            }
-        };
-        let pos_text = format_position(seconds);
-        if !pos_text.is_empty() {
-            format!(" {}", pos_text)
-        } else {
-            String::new()
+    // Check if there's any actual metadata. If not, output nothing.
+    if player_state.title.is_empty() && player_state.artist.is_empty() && player_state.album.is_empty() {
+        if !last_output.is_empty() {
+            println!();
+            *last_output = String::new();
         }
+        return;
+    }
+
+    let formatted = format_metadata(
+        &config.format,
+        &player_state.title,
+        &player_state.artist,
+        &player_state.album,
+    );
+
+    let scrolled_text = get_scrolled_text(config, player_state, scroll_state, &formatted);
+
+    // This check is still useful if formatted metadata results in an empty scrolled_text
+    // even if title/artist/album are not all empty (e.g., format string is empty).
+    if scrolled_text.trim().is_empty() {
+        if !last_output.is_empty() {
+            println!();
+            *last_output = String::new();
+        }
+        return;
+    }
+
+    let class = if player_state.playing {
+        "playing"
     } else {
-        String::new()
+        "paused"
     };
+    let position_text = get_position_text(config, player_state);
+
     let output = if config.no_icon {
         format!("{}{}", scrolled_text, position_text)
-    } else if !icon.is_empty() && !scrolled_text.is_empty() {
-        format!("{} {}{}", icon, scrolled_text, position_text)
     } else {
-        format!("{}{}", icon, scrolled_text)
+        let icon = get_icon(player_state);
+        format!("{} {}{}", icon, scrolled_text, position_text)
     };
-    let json_output = serde_json::json!({"text": output, "class": class}).to_string();
+
+    let json_output = serde_json::json!({
+        "text": output,
+        "class": class,
+    })
+    .to_string();
+
     if *last_output != json_output {
         println!("{}", json_output);
         *last_output = json_output;
