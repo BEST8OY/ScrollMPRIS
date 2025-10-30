@@ -1,22 +1,8 @@
+use std::collections::HashMap;
+
 use crate::config::{Config, PositionMode, ScrollMode as ConfigScrollMode};
 use crate::player::PlayerState;
-use crate::scroll::{scroll, ScrollMode, ScrollState};
-
-/// Picks an icon that represents the service based on its name.
-pub fn icon_for(service: &str) -> &'static str {
-    let service = service.to_lowercase();
-    match service {
-        s if s.contains("spotify") => "",
-        s if s.contains("vlc") => "󰕼",
-        s if s.contains("edge") => "󰇩",
-        s if s.contains("firefox") => "󰈹",
-        s if s.contains("mpv") => "",
-        s if s.contains("chrome") => "",
-        s if s.contains("telegramdesktop") => "",
-        s if s.contains("tauon") => "",
-        _ => "",
-    }
-}
+use crate::scroll::{ScrollMode, ScrollState, scroll};
 
 fn format_metadata(format: &str, title: &str, artist: &str, album: &str) -> String {
     format
@@ -27,9 +13,31 @@ fn format_metadata(format: &str, title: &str, artist: &str, album: &str) -> Stri
         .to_string()
 }
 
-fn get_icon(player_state: &PlayerState) -> String {
-    let service_icon = player_state.get_service().map(icon_for).unwrap_or("");
-    let play_icon = if player_state.playing { "" } else { "" };
+fn get_icon(
+    player_state: &PlayerState,
+    icon_format: &HashMap<String, String>,
+    no_play_icon: bool,
+) -> String {
+    let service = player_state.get_service().unwrap_or("").to_lowercase();
+
+    let service_icon = icon_format
+        .iter()
+        .find(|(key, _)| service.contains(*key))
+        .map(|(_, icon)| icon.as_str())
+        .unwrap_or_else(|| {
+            icon_format
+                .get("404")
+                .map(|s| s.as_str())
+                .unwrap_or("")
+        });
+
+    let play_icon = if no_play_icon {
+        ""
+    } else if player_state.playing {
+        ""
+    } else {
+        ""
+    };
 
     if !service_icon.is_empty() {
         format!("{} {}", service_icon, play_icon)
@@ -91,7 +99,10 @@ pub fn print_status(
     last_output: &mut String,
 ) {
     // If there's no metadata, output a stopped status.
-    if player_state.title.is_empty() && player_state.artist.is_empty() && player_state.album.is_empty() {
+    if player_state.title.is_empty()
+        && player_state.artist.is_empty()
+        && player_state.album.is_empty()
+    {
         let json_output = serde_json::json!({
             "text": "",
             "class": "stopped",
@@ -132,7 +143,7 @@ pub fn print_status(
     } else if config.no_icon {
         format!("{}{}", scrolled_text, position_text)
     } else {
-        let icon = get_icon(player_state);
+        let icon = get_icon(player_state, &config.icon_format, config.no_status_icon);
         format!("{} {}{}", icon, scrolled_text, position_text)
     };
 
