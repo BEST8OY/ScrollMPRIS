@@ -15,23 +15,29 @@ A scrolling MPRIS module for [Waybar](https://github.com/Alexays/Waybar) written
 ## Installation & Build
 
 1. **Clone the Repository:**
+
    ```bash
    git clone https://github.com/BEST8OY/ScrollMPRIS.git
    cd ScrollMPRIS
    ```
+
 2. **Build the Project:**
+
    ```bash
    cargo build --release
    ```
+
 3. **Locate the Executable:**
    After a successful build, the binary will be in:
-   ```
+
+   ```txt
    ScrollMPRIS/target/release/
    ```
 
 ## Waybar Integration
 
 To add ScrollMPRIS as a custom module in Waybar, insert the following snippet into your Waybar config:
+
 ```json
 "custom/ScrollMPRIS": {
     "return-type": "json",
@@ -40,10 +46,13 @@ To add ScrollMPRIS as a custom module in Waybar, insert the following snippet in
     "on-click": "playerctl play-pause"
 },
 ```
+
 Replace `/path/to/ScrollMPRIS` with the actual path to your built binary.
 
 ### Styling with CSS
+
 You can customize the module's appearance using these selectors in your Waybar style:
+
 ```css
 #custom-ScrollMPRIS,
 #custom-ScrollMPRIS.playing,
@@ -63,11 +72,14 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 | `--scroll <wrapping OR reset>`| Choose scrolling behavior: `wrapping` for continuous loop, `reset` to restart after finish  | `--scroll wrapping`                      |
 | `--position-mode <mode>`      | Position style: `increasing` (elapsed) or `remaining` (time left)                           | `--position-mode remaining`              |
 | `--format <string>`           | Metadata format (supports `{title}`, `{artist}`, `{album}`)                                 | `--format '{title} - {artist}'`          |
+| `--tooltip-format <string>`           | Metadata format for tooltip (supports `{title}`, `{artist}`, `{album}`)                                 | `--tooltip-format '{title} - {artist}'`          |
+| `--icon-format <string>`           | Icon format as JSON. 404 means default        | `--icon-format '{"404": "", "vlc": "󰕼", "mpv": "", "spotify": ""}'`          |
 | `--no-icon`                   | Disable icon in output                                                                      | `--no-icon`                              |
+| `--no-status-icon`                   | Disables play/pause icon in output                                                                      | `--no-status-icon`                              |
 | `--freeze`                    | Pause scroll when playback is paused                                                        | `--freeze`                               |
 
-
 **Examples:**
+
 ```bash
 ./ScrollMPRIS -s 50 -w 40 -b edge,firefox,mpv --scroll wrapping --position --position-mode remaining --format '{title} - {artist}' --no-icon
 ```
@@ -85,7 +97,9 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 
 ![Wrapped mode](https://github.com/user-attachments/assets/c72cc4be-3385-4a53-8848-7c292e12e400)
 
+## Deployment
 
+pid is stored in a file at `/tmp/scrollbarmpris/{timestamp}.pid`. Use it to track instances
 
 ## Contributing
 
@@ -93,7 +107,9 @@ Contributions, feature requests, and issue reports are always welcome!
 Feel free to open an issue or submit a pull request.
 
 ## Credits
+
 - **ScrollMPRIS** and this **README** were written and improved using AI.
 
 ## License
+
 Unlicensed. See LICENSE for details.
