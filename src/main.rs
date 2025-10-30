@@ -1,17 +1,18 @@
+use std::fs;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use config::Config;
 use mpris::events::MprisEventHandler;
-use scroll::ScrollState;
 use player::PlayerState;
+use scroll::ScrollState;
 use tokio::sync::mpsc;
 
 mod config;
 mod mpris;
-mod scroll;
 mod player;
+mod scroll;
 mod utils;
 
 use utils::print_status;
@@ -24,6 +25,17 @@ async fn main() -> Result<()> {
     let player_state = Arc::new(Mutex::new(PlayerState::default()));
     let (tx, mut rx) = mpsc::channel(8);
     let block_list = config.blocked.clone();
+
+    // Write PID
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let pid = std::process::id();
+    let filename = format!("/tmp/scrollbarmpris/{}.pid", timestamp);
+    fs::create_dir_all("/tmp/scrollbarmpris").expect("Failed to create directory at /tmp");
+    fs::write(&filename, pid.to_string()).unwrap();
 
     // Spawn MPRIS event handler
     {
@@ -65,7 +77,12 @@ async fn main() -> Result<()> {
                 let mut player_state = player_state.lock().unwrap();
                 let mut scroll_state = scroll_state.lock().unwrap();
                 let mut last_output = last_output.lock().unwrap();
-                print_status(&config, &mut player_state, &mut scroll_state, &mut last_output);
+                print_status(
+                    &config,
+                    &mut player_state,
+                    &mut scroll_state,
+                    &mut last_output,
+                );
             }
         });
     }
@@ -77,7 +94,12 @@ async fn main() -> Result<()> {
         if player_state.playing {
             let mut scroll_state = scroll_state.lock().unwrap();
             let mut last_output = last_output.lock().unwrap();
-            print_status(&config, &mut player_state, &mut scroll_state, &mut last_output);
+            print_status(
+                &config,
+                &mut player_state,
+                &mut scroll_state,
+                &mut last_output,
+            );
         }
     }
 }

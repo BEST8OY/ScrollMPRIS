@@ -147,9 +147,17 @@ pub fn print_status(
         format!("{} {}{}", icon, scrolled_text, position_text)
     };
 
-    let json_output = serde_json::json!({
+    let tooltip = format_metadata(
+        &config.tooltip_format,
+        &player_state.title,
+        &player_state.artist,
+        &player_state.album,
+    );
+
+    let json_output: String = serde_json::json!({
         "text": output,
         "class": class,
+        "tooltip": tooltip
     })
     .to_string();
 

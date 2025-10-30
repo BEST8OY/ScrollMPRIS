@@ -36,6 +36,9 @@ pub struct Config {
     /// Metadata format string
     #[arg(long = "format", default_value = "{title} - {artist}")]
     pub format: String,
+    /// Metadata format string for tooltip
+    #[arg(long = "tooltip-format", default_value = "{title} - {artist} | {album}")]
+    pub tooltip_format: String,
     /// Custom icons
     #[arg(
         long = "icon-format",
