@@ -14,6 +14,16 @@ A scrolling MPRIS module for [Waybar](https://github.com/Alexays/Waybar) written
 
 ## Installation & Build
 
+### Arch User Repository (AUR)
+
+The program is now on Arch User Repository. You can an AUR helper like yay to install it.
+
+```bash
+yay -S scrollmpris-git
+```
+
+### Manual
+
 1. **Clone the Repository:**
 
    ```bash
@@ -31,7 +41,14 @@ A scrolling MPRIS module for [Waybar](https://github.com/Alexays/Waybar) written
    After a successful build, the binary will be in:
 
    ```txt
-   ScrollMPRIS/target/release/
+   target/release/
+   ```
+
+4. **Install**
+   Install the binary to `/usr/local/bin`
+
+   ```bash
+   install -Dt /usr/local/bin target/release/ScrollMPRIS
    ```
 
 ## Waybar Integration
@@ -41,7 +58,7 @@ To add ScrollMPRIS as a custom module in Waybar, insert the following snippet in
 ```json
 "custom/ScrollMPRIS": {
     "return-type": "json",
-    "exec": "/path/to/ScrollMPRIS",
+    "exec": "ScrollMPRIS",
     "escape": true,
     "on-click": "playerctl play-pause"
 },
@@ -81,7 +98,7 @@ ScrollMPRIS offers several command-line options to tailor its behavior:
 **Examples:**
 
 ```bash
-./ScrollMPRIS -s 50 -w 40 -b edge,firefox,mpv --scroll wrapping --position --position-mode remaining --format '{title} - {artist}' --no-icon
+ScrollMPRIS -s 50 -w 40 -b edge,firefox,mpv --scroll wrapping --position --position-mode remaining --format '{title} - {artist}' --no-icon
 ```
 
 - To enable position display, simply add `-p` or `--position` (no value needed).
