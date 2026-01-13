@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::config::{Config, PositionMode, ScrollMode as ConfigScrollMode};
 use crate::player::PlayerState;
 use crate::scroll::{ScrollMode, ScrollState, scroll};
+use unescape::unescape;
 
 fn format_metadata(format: &str, title: &str, artist: &str, album: &str) -> String {
     format
@@ -24,12 +25,7 @@ fn get_icon(
         .iter()
         .find(|(key, _)| service.contains(*key))
         .map(|(_, icon)| icon.as_str())
-        .unwrap_or_else(|| {
-            icon_format
-                .get("404")
-                .map(|s| s.as_str())
-                .unwrap_or("")
-        });
+        .unwrap_or_else(|| icon_format.get("404").map(|s| s.as_str()).unwrap_or(""));
 
     let play_icon = if no_play_icon {
         ""
@@ -110,7 +106,7 @@ pub fn print_status(
         .to_string();
 
         if *last_output != json_output {
-            println!("{}", json_output);
+            println!("{}", unescape(&json_output).unwrap());
             *last_output = json_output;
         }
         return;
@@ -162,7 +158,7 @@ pub fn print_status(
     .to_string();
 
     if *last_output != json_output {
-        println!("{}", json_output);
+        println!("{}", unescape(&json_output).unwrap());
         *last_output = json_output;
     }
 }
