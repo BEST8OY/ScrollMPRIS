@@ -18,6 +18,7 @@ fn get_icon(
     player_state: &PlayerState,
     icon_format: &HashMap<String, String>,
     no_play_icon: bool,
+    switch_icons: bool,
 ) -> String {
     let service = player_state.get_service().unwrap_or("").to_lowercase();
 
@@ -29,10 +30,16 @@ fn get_icon(
 
     let play_icon = if no_play_icon {
         ""
-    } else if player_state.playing {
-        ""
+    } else if switch_icons {
+        match player_state.playing {
+            true => "",
+            false => "",
+        }
     } else {
-        ""
+        match player_state.playing {
+            true => "",
+            false => "",
+        }
     };
 
     if !service_icon.is_empty() {
@@ -139,7 +146,7 @@ pub fn print_status(
     } else if config.no_icon {
         format!("{}{}", scrolled_text, position_text)
     } else {
-        let icon = get_icon(player_state, &config.icon_format, config.no_status_icon);
+        let icon = get_icon(player_state, &config.icon_format, config.no_status_icon, config.switch_icons);
         format!("{} {}{}", icon, scrolled_text, position_text)
     };
 

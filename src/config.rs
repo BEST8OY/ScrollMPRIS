@@ -51,6 +51,9 @@ pub struct Config {
     /// Disable icon in output
     #[arg(long = "no-icon", default_value_t = false, action = clap::ArgAction::SetTrue)]
     pub no_icon: bool,
+    /// Switch play/pause icon in output
+    #[arg(long = "switch-icons", default_value_t = false, action = clap::ArgAction::SetTrue)]
+    pub switch_icons: bool,
     /// Position style: "increasing" or "remaining"
     #[arg(long = "position-mode", default_value = "increasing")]
     pub position_mode: PositionMode,
