@@ -1,227 +1,318 @@
-//! Event watching and event handler registration for MPRIS.
+//! Event watching and event handler registration for MPRIS using zbus.
 
-use dbus::nonblock::Proxy;
-use dbus::nonblock::stdintf::org_freedesktop_dbus::Properties;
-use dbus::message::MatchRule;
-use dbus::channel::MatchingReceiver;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use crate::mpris::connection::{get_active_player_names, is_blocked, TIMEOUT, MprisError};
-use crate::mpris::metadata::{TrackMetadata, extract_metadata};
+use std::time::Duration;
+use futures_util::StreamExt;
+use zbus::fdo::{DBusProxy, NameOwnerChangedStream};
 
-const MPRIS_PLAYER_INTERFACE: &str = "org.mpris.MediaPlayer2.Player";
-const DBUS_PROPERTIES_INTERFACE: &str = "org.freedesktop.DBus.Properties";
-const PLAYERCTL_SENDER: &str = "com.github.altdesktop.playerctld";
+use crate::mpris::connection::{find_active_service, get_dbus_conn, get_position, MprisError};
+use crate::mpris::metadata::{extract_metadata, TrackMetadata};
+use crate::mpris::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
 
+/// Event handler managing MPRIS signals, player discovery, and lifecycle monitoring.
 pub struct MprisEventHandler<F, G>
 where
-    F: FnMut(TrackMetadata, f64, String, String) + Send + 'static,
+    F: FnMut(TrackMetadata, f64, String, String, f64) + Send + 'static,
     G: FnMut(TrackMetadata, f64, String) + Send + 'static,
 {
     on_track_change: F,
     on_seek: G,
-    block_list: Arc<Vec<String>>,
+    block_list: Vec<String>,
     current_service: String,
     last_track: TrackMetadata,
     last_playback_status: String,
-    conn: Arc<dbus::nonblock::SyncConnection>,
-    msg_rx: mpsc::Receiver<dbus::message::Message>,
+    conn: zbus::Connection,
 }
 
 impl<F, G> MprisEventHandler<F, G>
 where
-    F: FnMut(TrackMetadata, f64, String, String) + Send + 'static,
+    F: FnMut(TrackMetadata, f64, String, String, f64) + Send + 'static,
     G: FnMut(TrackMetadata, f64, String) + Send + 'static,
 {
+    /// Create a new MPRIS event handler.
     pub async fn new(
         on_track_change: F,
         on_seek: G,
         block_list: Vec<String>,
     ) -> Result<Self, MprisError> {
-        let (resource, conn) = dbus_tokio::connection::new_session_sync()
-            .map_err(|_| MprisError::NoConnection)?;
-        tokio::spawn(async move { resource.await });
-
-        let (tx, rx) = mpsc::channel::<dbus::message::Message>(8);
-
-        Self::add_match_rule(&conn, MatchRule::new_signal(DBUS_PROPERTIES_INTERFACE, "PropertiesChanged").static_clone(), tx.clone()).await?;
-        Self::add_match_rule(&conn, MatchRule::new_signal(DBUS_PROPERTIES_INTERFACE, "PropertiesChanged").with_sender(PLAYERCTL_SENDER).static_clone(), tx.clone()).await?;
-        Self::add_match_rule(&conn, MatchRule::new_signal(MPRIS_PLAYER_INTERFACE, "Seeked").static_clone(), tx.clone()).await?;
+        let conn = get_dbus_conn().await?;
 
         let mut handler = Self {
             on_track_change,
             on_seek,
-            block_list: Arc::new(block_list),
+            block_list,
             current_service: String::new(),
             last_track: TrackMetadata::default(),
             last_playback_status: String::new(),
             conn,
-            msg_rx: rx,
         };
 
-        // Initial player discovery
-        if let Ok(names) = get_active_player_names().await {
-            if let Some(service) = names.iter().find(|s| !is_blocked(s, &handler.block_list)) {
-                handler.update_current_player(service).await?;
-            }
-        }
+        // Perform initial player discovery (silently handle if no active player)
+        let _ = handler.discover_active_player().await;
 
         Ok(handler)
     }
 
-    async fn add_match_rule(
-        conn: &Arc<dbus::nonblock::SyncConnection>,
-        rule: MatchRule<'static>,
-        tx: mpsc::Sender<dbus::message::Message>,
-    ) -> Result<(), MprisError> {
-        conn.add_match(rule.clone()).await?;
-        let conn_clone = Arc::clone(conn);
-        MatchingReceiver::start_receive(
-            &*conn_clone,
-            rule,
-            Box::new(move |msg, _| {
-                let _ = tx.try_send(msg);
-                true
-            }),
-        );
+    /// Discover the active MPRIS player and switch to it if found.
+    pub async fn discover_active_player(&mut self) -> Result<(), MprisError> {
+        match find_active_service(&self.block_list).await {
+            Ok(Some(service)) => {
+                if service != self.current_service {
+                    self.switch_to_player(&service).await?;
+                }
+            }
+            Ok(None) => {
+                if !self.current_service.is_empty() {
+                    self.deactivate_player();
+                }
+            }
+            Err(e) => return Err(e),
+        }
         Ok(())
     }
 
-    async fn update_current_player(&mut self, service: &str) -> Result<(), MprisError> {
-        let proxy = Proxy::new(service, "/org/mpris/MediaPlayer2", TIMEOUT, self.conn.clone());
-        let metadata: Option<dbus::arg::PropMap> = Properties::get(&proxy, MPRIS_PLAYER_INTERFACE, "Metadata").await.ok();
-        let meta = metadata.map(|map| extract_metadata(&map)).unwrap_or_default();
-        let position: f64 = Properties::get::<i64>(&proxy, MPRIS_PLAYER_INTERFACE, "Position").await.ok().map(|p| p as f64 / 1_000_000.0).unwrap_or(0.0);
-        let playback_status: String = Properties::get::<String>(&proxy, MPRIS_PLAYER_INTERFACE, "PlaybackStatus").await.ok().unwrap_or_else(|| "Stopped".to_string());
+    /// Switch active tracking to the specified player service.
+    async fn switch_to_player(&mut self, service: &str) -> Result<(), MprisError> {
+        let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
+            .destination(service.to_string())?
+            .build()
+            .await?;
+
+        let map = proxy.metadata().await.unwrap_or_default();
+        let meta = extract_metadata(&map);
+        let position = get_position(service).await.unwrap_or(0.0);
+        let rate = proxy.rate().await.unwrap_or(1.0);
+        let playback_status = proxy
+            .playback_status()
+            .await
+            .unwrap_or_else(|_| "Stopped".to_string());
 
         self.current_service = service.to_string();
         self.last_track = meta.clone();
-        let playback_status_str = playback_status.clone();
-        self.last_playback_status = playback_status;
-        (self.on_track_change)(meta, position, playback_status_str, service.to_string());
+        self.last_playback_status = playback_status.clone();
+
+        (self.on_track_change)(meta, position, playback_status, service.to_string(), rate);
         Ok(())
     }
 
+    /// Reset player state and notify listeners of player deactivation.
+    fn deactivate_player(&mut self) {
+        self.current_service.clear();
+        self.last_track = TrackMetadata::default();
+        self.last_playback_status.clear();
+
+        (self.on_track_change)(
+            TrackMetadata::default(),
+            0.0,
+            String::new(),
+            String::new(),
+            1.0,
+        );
+    }
+
+    /// Deactivate current player and immediately attempt re-discovery.
+    async fn deactivate_and_rediscover(&mut self) -> Result<(), MprisError> {
+        self.deactivate_player();
+        let _ = self.discover_active_player().await;
+        Ok(())
+    }
+
+    /// Main event loop: watches D-Bus NameOwnerChanged, playerctld changes, and player signals.
     pub async fn handle_events(&mut self) -> Result<(), MprisError> {
-        while let Some(msg) = self.msg_rx.recv().await {
-            self.handle_message(msg).await?;
-        }
-        Ok(())
-    }
+        let dbus_proxy = DBusProxy::new(&self.conn).await?;
+        let mut name_owner_stream = dbus_proxy.receive_name_owner_changed().await?;
+        let mut idle_ticker = tokio::time::interval(Duration::from_secs(2));
+        idle_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    async fn handle_message(&mut self, msg: dbus::message::Message) -> Result<(), MprisError> {
-        match (msg.interface().as_deref(), msg.member().as_deref()) {
-            (Some(MPRIS_PLAYER_INTERFACE), Some("Seeked")) => self.handle_seek(msg).await?,
-            (Some(DBUS_PROPERTIES_INTERFACE), _) => self.handle_properties_changed(msg).await?,
-            _ => {}
-        }
-        Ok(())
-    }
-
-    async fn handle_seek(&mut self, msg: dbus::message::Message) -> Result<(), MprisError> {
-        if self.current_service.is_empty() {
-            return Ok(());
-        }
-        if let Some(pos) = msg.read1::<i64>().ok() {
-            let sec = pos as f64 / 1_000_000.0;
-            (self.on_seek)(self.last_track.clone(), sec, self.current_service.clone());
-        }
-        Ok(())
-    }
-
-    async fn handle_properties_changed(&mut self, msg: dbus::message::Message) -> Result<(), MprisError> {
-        if let Some(interface_name) = msg.read1::<&str>().ok() {
-            match interface_name {
-                "org.mpris.MediaPlayer2" | "org.freedesktop.DBus.Properties" | "com.github.altdesktop.playerctld" => {
-                    self.handle_player_names_changed(msg).await?;
+        loop {
+            if !self.current_service.is_empty() {
+                // Active player loop
+                if let Err(e) = self.run_active_player_loop(&dbus_proxy, &mut name_owner_stream).await {
+                    eprintln!("Error in active player loop: {e}");
+                    self.deactivate_and_rediscover().await?;
                 }
-                MPRIS_PLAYER_INTERFACE => {
-                    self.handle_player_properties_changed(msg).await?;
+            } else {
+                // Idle loop: wait for NameOwnerChanged signal or periodic ticker
+                tokio::select! {
+                    _ = idle_ticker.tick() => {
+                        let _ = self.discover_active_player().await;
+                    }
+                    Some(signal) = name_owner_stream.next() => {
+                        if let Ok(args) = signal.args() {
+                            let name = args.name.as_str();
+                            let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
+                            let old_owner = args.old_owner.as_deref().unwrap_or("");
+                            let new_owner = args.new_owner.as_deref().unwrap_or("");
+                            if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
+                                let _ = self.discover_active_player().await;
+                            }
+                        }
+                    }
                 }
-                _ => {}
             }
         }
-        Ok(())
     }
 
-    async fn handle_player_names_changed(&mut self, msg: dbus::message::Message) -> Result<(), MprisError> {
-        let changed: Option<dbus::arg::PropMap> = msg.read2().ok().map(|(_, c): (String, dbus::arg::PropMap)| c);
-        if let Some(changed) = changed {
-            if changed.contains_key("PlayerNames") {
-                if let Ok(names) = get_active_player_names().await {
-                    if let Some(service) = names.iter().find(|s| !is_blocked(s, &self.block_list)) {
-                        if *service != self.current_service {
-                            self.update_current_player(service).await?;
-                        }
-                    } else {
-                        // No available player: reset state and trigger output update
-                        self.current_service.clear();
-                        self.last_track = crate::mpris::metadata::TrackMetadata::default();
-                        self.last_playback_status.clear();
+    /// Inner event loop for the currently active player.
+    async fn run_active_player_loop(
+        &mut self,
+        dbus_proxy: &DBusProxy<'static>,
+        name_owner_stream: &mut NameOwnerChangedStream,
+    ) -> Result<(), MprisError> {
+        let service = self.current_service.clone();
+        let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
+            .destination(service.clone())?
+            .build()
+            .await?;
+
+        let mut seeked_stream = proxy.receive_seeked().await?;
+        let mut status_stream = proxy.receive_playback_status_changed().await;
+        let mut metadata_stream = proxy.receive_metadata_changed().await;
+        let mut rate_stream = proxy.receive_rate_changed().await;
+
+        // Subscribe to playerctld if available
+        let playerctld_proxy = PlayerctldProxy::new(&self.conn).await.ok();
+        let mut playerctld_stream = if let Some(ref p) = playerctld_proxy {
+            Some(p.receive_player_names_changed().await)
+        } else {
+            None
+        };
+
+        let mut liveness_ticker = tokio::time::interval(Duration::from_secs(2));
+        liveness_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                // 1. Seeked signal from active player
+                Some(signal) = seeked_stream.next() => {
+                    if let Ok(args) = signal.args() {
+                        let pos_sec = args.position as f64 / 1_000_000.0;
+                        (self.on_seek)(self.last_track.clone(), pos_sec, self.current_service.clone());
+                    }
+                }
+
+                // 2. Playback status changed
+                Some(_) = status_stream.next() => {
+                    let status = proxy.playback_status().await.unwrap_or_else(|_| "Stopped".to_string());
+                    if status != self.last_playback_status {
+                        self.last_playback_status = status.clone();
+                        let position = get_position(&self.current_service).await.unwrap_or(0.0);
+                        let rate = proxy.rate().await.unwrap_or(1.0);
                         (self.on_track_change)(
-                            crate::mpris::metadata::TrackMetadata::default(),
-                            0.0,
-                            String::new(),
-                            String::new(),
+                            self.last_track.clone(),
+                            position,
+                            status,
+                            self.current_service.clone(),
+                            rate,
                         );
                     }
                 }
-            }
-        }
-        Ok(())
-    }
 
-    async fn handle_player_properties_changed(&mut self, msg: dbus::message::Message) -> Result<(), MprisError> {
-        if self.current_service.is_empty() {
-            return Ok(());
-        }
-        let player_proxy = Proxy::new(
-            &self.current_service,
-            "/org/mpris/MediaPlayer2",
-            TIMEOUT,
-            self.conn.clone(),
-        );
-        let changed: Option<dbus::arg::PropMap> = msg.read2().ok().map(|(_, c): (String, dbus::arg::PropMap)| c);
-        if let Some(changed) = changed {
-            let mut metadata_changed = false;
-            let mut status_changed = false;
+                // 3. Metadata changed
+                Some(_) = metadata_stream.next() => {
+                    if let Ok(map) = proxy.metadata().await {
+                        let new_track = extract_metadata(&map);
+                        if new_track != self.last_track {
+                            self.last_track = new_track.clone();
+                            let position = get_position(&self.current_service).await.unwrap_or(0.0);
+                            let rate = proxy.rate().await.unwrap_or(1.0);
+                            (self.on_track_change)(
+                                new_track,
+                                position,
+                                self.last_playback_status.clone(),
+                                self.current_service.clone(),
+                                rate,
+                            );
+                        }
+                    }
+                }
 
-            if changed.contains_key("Metadata") {
-                if let Ok(metadata) = Properties::get::<dbus::arg::PropMap>(&player_proxy, MPRIS_PLAYER_INTERFACE, "Metadata").await {
-                    let new_track = extract_metadata(&metadata);
-                    if new_track != self.last_track {
-                        self.last_track = new_track;
-                        metadata_changed = true;
+                // 4. Playback rate changed
+                Some(_) = rate_stream.next() => {
+                    let rate = proxy.rate().await.unwrap_or(1.0);
+                    let position = get_position(&self.current_service).await.unwrap_or(0.0);
+                    (self.on_track_change)(
+                        self.last_track.clone(),
+                        position,
+                        self.last_playback_status.clone(),
+                        self.current_service.clone(),
+                        rate,
+                    );
+                }
+
+                // 5. Playerctld player order changed
+                Some(_) = async {
+                    if let Some(ref mut s) = playerctld_stream {
+                        s.next().await
+                    } else {
+                        futures_util::future::pending().await
+                    }
+                } => {
+                    match find_active_service(&self.block_list).await {
+                        Ok(Some(ref best_service)) if best_service == &self.current_service => {
+                            // Same player remains active: do not tear down streams
+                        }
+                        Ok(Some(best_service)) => {
+                            self.switch_to_player(&best_service).await?;
+                            return Ok(());
+                        }
+                        Ok(None) => {
+                            self.deactivate_player();
+                            return Ok(());
+                        }
+                        Err(_) => {}
+                    }
+                }
+
+                // 6. D-Bus NameOwnerChanged (player exited, launched, or replaced)
+                Some(signal) = name_owner_stream.next() => {
+                    if let Ok(args) = signal.args() {
+                        let name = args.name.as_str();
+                        let old_owner = args.old_owner.as_deref().unwrap_or("");
+                        let new_owner = args.new_owner.as_deref().unwrap_or("");
+                        let is_current = name == self.current_service;
+                        let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
+                        let owner_changed = old_owner != new_owner;
+
+                        if is_current && owner_changed {
+                            // Reconnect to clear stale proxy cache across PID boundaries
+                            self.deactivate_and_rediscover().await?;
+                            return Ok(());
+                        } else if is_mpris && owner_changed {
+                            match find_active_service(&self.block_list).await {
+                                Ok(Some(ref best_service)) if best_service != &self.current_service => {
+                                    self.switch_to_player(best_service).await?;
+                                    return Ok(());
+                                }
+                                Ok(None) => {
+                                    self.deactivate_player();
+                                    return Ok(());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                // 7. Authoritative liveness check via D-Bus daemon
+                _ = liveness_ticker.tick() => {
+                    let has_owner = match zbus::names::BusName::try_from(self.current_service.as_str()) {
+                        Ok(bus_name) => matches!(
+                            tokio::time::timeout(
+                                Duration::from_secs(3),
+                                dbus_proxy.name_has_owner(bus_name)
+                            ).await,
+                            Ok(Ok(true))
+                        ),
+                        Err(_) => false,
+                    };
+
+                    if !has_owner {
+                        self.deactivate_and_rediscover().await?;
+                        return Ok(());
                     }
                 }
             }
-
-            if changed.contains_key("PlaybackStatus") {
-                if let Ok(status) = Properties::get::<String>(&player_proxy, MPRIS_PLAYER_INTERFACE, "PlaybackStatus").await {
-                    if status != self.last_playback_status {
-                        self.last_playback_status = status;
-                        status_changed = true;
-                    }
-                }
-            }
-
-            if changed.contains_key("Position") {
-                if let Some(pos_var) = changed.get("Position") {
-                    if let Some(pos) = pos_var.0.as_i64() {
-                        let sec = pos as f64 / 1_000_000.0;
-                        (self.on_seek)(self.last_track.clone(), sec, self.current_service.clone());
-                    }
-                }
-            }
-
-            if metadata_changed || status_changed {
-                let position = Properties::get::<i64>(&player_proxy, MPRIS_PLAYER_INTERFACE, "Position")
-                    .await
-                    .map(|p| p as f64 / 1_000_000.0)
-                    .unwrap_or(0.0);
-                (self.on_track_change)(self.last_track.clone(), position, self.last_playback_status.clone(), self.current_service.clone());
-            }
         }
-        Ok(())
     }
 }
+

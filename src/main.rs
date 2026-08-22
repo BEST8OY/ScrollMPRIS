@@ -3,27 +3,20 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use config::Config;
-use mpris::events::MprisEventHandler;
-use player::PlayerState;
-use scroll::ScrollState;
+use ScrollMPRIS::config::Config;
+use ScrollMPRIS::mpris::events::MprisEventHandler;
+use ScrollMPRIS::player::PlayerState;
+use ScrollMPRIS::scroll::ScrollState;
+use ScrollMPRIS::utils::print_status;
 use tokio::sync::mpsc;
-
-mod config;
-mod mpris;
-mod player;
-mod scroll;
-mod utils;
-
-use utils::print_status;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = Arc::new(Config::parse());
-    let scroll_state = Arc::new(Mutex::new(ScrollState::new()));
-    let last_output = Arc::new(Mutex::new(String::new()));
+    let config = Config::parse();
+    let mut scroll_state = ScrollState::new();
+    let mut last_output = String::new();
     let player_state = Arc::new(Mutex::new(PlayerState::default()));
-    let (tx, mut rx) = mpsc::channel(8);
+    let (tx, mut rx) = mpsc::channel(16);
     let block_list = config.blocked.clone();
 
     // Write PID
@@ -39,67 +32,94 @@ async fn main() -> Result<()> {
 
     // Spawn MPRIS event handler
     {
-        let player_state1 = player_state.clone();
-        let tx1 = tx.clone();
-        let player_state2 = player_state.clone();
-        let tx2 = tx.clone();
+        let player_state = player_state.clone();
+        let tx = tx.clone();
         let block_list = block_list.clone();
         tokio::spawn(async move {
-            let mut event_handler = MprisEventHandler::new(
-                move |meta, pos, playback_status, service| {
-                    let mut player_state = player_state1.lock().unwrap();
-                    player_state.update_from_metadata(&meta);
-                    player_state.set_service(&service);
-                    player_state.update_playback_dbus(playback_status.to_string(), pos);
-                    let _ = tx1.try_send(());
-                },
-                move |_meta, pos, _service| {
-                    let mut player_state = player_state2.lock().unwrap();
-                    player_state.reset_position_cache(pos);
-                    let _ = tx2.try_send(());
-                },
-                block_list,
-            )
-            .await
-            .expect("Failed to create MPRIS event handler");
-            let _ = event_handler.handle_events().await;
-        });
-    }
+            let mut backoff = Duration::from_millis(500);
+            loop {
+                let player_state1 = player_state.clone();
+                let tx1 = tx.clone();
+                let player_state2 = player_state.clone();
+                let tx2 = tx.clone();
+                let block_list = block_list.clone();
 
-    // Spawn status printer
-    {
-        let player_state = player_state.clone();
-        let scroll_state = scroll_state.clone();
-        let last_output = last_output.clone();
-        let config = config.clone();
-        tokio::spawn(async move {
-            while let Some(_) = rx.recv().await {
-                let mut player_state = player_state.lock().unwrap();
-                let mut scroll_state = scroll_state.lock().unwrap();
-                let mut last_output = last_output.lock().unwrap();
-                print_status(
-                    &config,
-                    &mut player_state,
-                    &mut scroll_state,
-                    &mut last_output,
-                );
+                match MprisEventHandler::new(
+                    move |meta, pos, playback_status, service, rate| {
+                        let mut state = player_state1.lock().unwrap();
+                        state.update_from_metadata(&meta);
+                        state.set_service(&service);
+                        state.update_playback_dbus(playback_status, pos, rate);
+                        let _ = tx1.try_send(());
+                    },
+                    move |_meta, pos, _service| {
+                        let mut state = player_state2.lock().unwrap();
+                        state.reset_position_cache(pos);
+                        let _ = tx2.try_send(());
+                    },
+                    block_list,
+                )
+                .await
+                {
+                    Ok(mut event_handler) => {
+                        let start = std::time::Instant::now();
+                        if let Err(e) = event_handler.handle_events().await {
+                            eprintln!("MPRIS event handler error: {e}");
+                        }
+                        if start.elapsed() >= Duration::from_secs(5) {
+                            backoff = Duration::from_millis(500);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to initialize MPRIS event handler: {e}");
+                    }
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(30));
             }
         });
     }
 
-    // Main loop: periodic update
+    // Unified Actor Loop: single owner of stdout, scroll_state, and last_output
+    let mut ticker = tokio::time::interval(Duration::from_millis(config.delay));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Emit initial status (e.g. stopped) so Waybar immediately receives state
+    {
+        let mut state = player_state.lock().unwrap();
+        print_status(
+            &config,
+            &mut state,
+            &mut scroll_state,
+            &mut last_output,
+            false,
+        );
+    }
+
     loop {
-        tokio::time::sleep(Duration::from_millis(config.delay)).await;
-        let mut player_state = player_state.lock().unwrap();
-        if player_state.playing {
-            let mut scroll_state = scroll_state.lock().unwrap();
-            let mut last_output = last_output.lock().unwrap();
-            print_status(
-                &config,
-                &mut player_state,
-                &mut scroll_state,
-                &mut last_output,
-            );
+        tokio::select! {
+            Some(_) = rx.recv() => {
+                let mut state = player_state.lock().unwrap();
+                print_status(
+                    &config,
+                    &mut state,
+                    &mut scroll_state,
+                    &mut last_output,
+                    false,
+                );
+            }
+            _ = ticker.tick() => {
+                let mut state = player_state.lock().unwrap();
+                if state.playing {
+                    print_status(
+                        &config,
+                        &mut state,
+                        &mut scroll_state,
+                        &mut last_output,
+                        true,
+                    );
+                }
+            }
         }
     }
 }

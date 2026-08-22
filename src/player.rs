@@ -3,7 +3,7 @@
 use crate::mpris::metadata::TrackMetadata;
 use std::time::Instant;
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq)]
 pub struct PlayerState {
     pub title: String,
     pub artist: String,
@@ -16,6 +16,26 @@ pub struct PlayerState {
     pub last_update: Option<Instant>,
     pub length: Option<f64>,
     pub service: Option<String>,
+    pub rate: f64,
+}
+
+impl Default for PlayerState {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            artist: String::new(),
+            album: String::new(),
+            playing: false,
+            status: String::new(),
+            position: 0.0,
+            err: None,
+            last_position: 0.0,
+            last_update: None,
+            length: None,
+            service: None,
+            rate: 1.0,
+        }
+    }
 }
 
 impl PlayerState {
@@ -38,19 +58,20 @@ impl PlayerState {
     pub fn get_service(&self) -> Option<&str> {
         self.service.as_deref()
     }
-    pub fn update_playback_dbus(&mut self, playback_status: String, position: f64) {
+    pub fn update_playback_dbus(&mut self, playback_status: String, position: f64, rate: f64) {
         self.playing = playback_status == "Playing";
         self.status = playback_status;
         self.last_position = position;
         self.last_update = Some(Instant::now());
         self.position = position;
+        self.rate = if rate > 0.0 { rate } else { 1.0 };
     }
     pub fn estimate_position(&self) -> f64 {
-        if self.playing {
-            if let Some(instant) = self.last_update {
-                let elapsed = instant.elapsed().as_secs_f64();
-                return self.last_position + elapsed;
-            }
+        if self.playing
+            && let Some(instant) = self.last_update
+        {
+            let elapsed = instant.elapsed().as_secs_f64() * self.rate;
+            return self.last_position + elapsed;
         }
         self.last_position
     }

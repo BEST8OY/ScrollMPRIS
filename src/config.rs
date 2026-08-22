@@ -70,6 +70,23 @@ pub struct Config {
     pub icon_format: HashMap<String, String>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        let mut config = <Self as clap::Parser>::parse_from(["ScrollMPRIS"]);
+        config.delay = (1000u64)
+            .saturating_sub((config.speed as u64).saturating_mul(9))
+            .max(100);
+        config.blocked = config
+            .blocked
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        config.icon_format = serde_json::from_str(&config.icon_format_json).unwrap();
+        config
+    }
+}
+
 impl Config {
     /// Parse arguments and compute derived fields.
     pub fn parse() -> Self {
@@ -89,3 +106,4 @@ impl Config {
         config
     }
 }
+
