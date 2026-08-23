@@ -1,117 +1,412 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 
-/// Position display mode for track time.
-#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
-pub enum PositionMode {
-    /// Show increasing time (elapsed)
-    Increasing,
-    /// Show remaining time
-    Remaining,
-}
 pub use crate::scroll::ScrollMode;
 
-/// Configuration parsed from command-line arguments.
-#[derive(Debug, Parser, Clone)]
-#[command(author, version, about, long_about = None)]
-pub struct Config {
+/// Helper function to provide default icon mappings.
+pub fn default_icon_map() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert("spotify".to_string(), "".to_string());
+    map.insert("vlc".to_string(), "󰕼".to_string());
+    map.insert("edge".to_string(), "󰇩".to_string());
+    map.insert("firefox".to_string(), "󰈹".to_string());
+    map.insert("mpv".to_string(), "".to_string());
+    map.insert("chrome".to_string(), "".to_string());
+    map.insert("telegramdesktop".to_string(), "".to_string());
+    map.insert("tauon".to_string(), "".to_string());
+    map.insert("404".to_string(), "".to_string());
+    map
+}
+
+/// Helper deserializer for string-or-array fields like `blocked` or `scroll_targets`.
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        String(String),
+        Vec(Vec<String>),
+    }
+
+    match Option::<StringOrVec>::deserialize(deserializer)? {
+        Some(StringOrVec::String(s)) => {
+            let list = s
+                .split(',')
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+            Ok(Some(list))
+        }
+        Some(StringOrVec::Vec(v)) => Ok(Some(v)),
+        None => Ok(None),
+    }
+}
+
+/// Icons section inside `config.toml`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct IconsSection {
+    pub switch_icons: Option<bool>,
+    pub players: Option<HashMap<String, String>>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// Representation of the `config.toml` structure.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct ConfigFile {
+    pub speed: Option<u32>,
+    pub width: Option<usize>,
+    #[serde(deserialize_with = "deserialize_string_or_vec", default)]
+    pub blocked: Option<Vec<String>>,
+    pub scroll_mode: Option<ScrollMode>,
+    #[serde(deserialize_with = "deserialize_string_or_vec", default)]
+    pub scroll_targets: Option<Vec<String>>,
+    pub format: Option<String>,
+    pub tooltip_format: Option<String>,
+    pub freeze: Option<bool>,
+    pub freeze_on_pause: Option<bool>,
+    pub switch_icons: Option<bool>,
+    pub icons: Option<IconsSection>,
+}
+
+/// Raw command-line arguments parsed by `clap`.
+#[derive(Debug, Parser, Clone, Default)]
+#[command(
+    name = "ScrollMPRIS",
+    author,
+    version,
+    about = "A fast, async, scrolling MPRIS module for Waybar written in pure Rust",
+    long_about = None
+)]
+pub struct CliArgs {
+    /// Path to optional configuration file (defaults to ~/.config/ScrollMPRIS/config.toml)
+    #[arg(short = 'c', long = "config")]
+    pub config: Option<PathBuf>,
+
+    /// Generate default configuration TOML to stdout and exit
+    #[arg(long = "generate-config")]
+    pub generate_config: bool,
+
     /// Scroll speed (0: slow=1000ms, 100: fast=100ms)
-    #[arg(short = 's', long = "speed", default_value_t = 0)]
-    pub speed: u32,
+    #[arg(short = 's', long = "speed")]
+    pub speed: Option<u32>,
+
     /// Maximum width for the scrolling text
-    #[arg(short = 'w', long = "width", default_value_t = 40)]
-    pub width: usize,
+    #[arg(short = 'w', long = "width")]
+    pub width: Option<usize>,
+
     /// Block certain players (comma-separated list)
     #[arg(
         short = 'b',
         long = "blocked",
-        value_delimiter = ',',
-        default_value = ""
+        value_delimiter = ','
     )]
-    pub blocked: Vec<String>,
+    pub blocked: Option<Vec<String>>,
+
     /// Scrolling behavior: "marquee", "restart", or "bounce"
-    #[arg(long = "scroll", value_enum, default_value_t = ScrollMode::Marquee)]
-    pub scroll_mode: ScrollMode,
+    #[arg(long = "scroll", value_enum)]
+    pub scroll_mode: Option<ScrollMode>,
+
     /// Metadata fields to scroll (comma-separated, e.g. "title" or "title,artist").
     /// If omitted and format contains no field directives, the full formatted string scrolls.
     #[arg(
         long = "scroll-targets",
         alias = "scroll-field",
         alias = "scroll-fields",
-        value_delimiter = ',',
-        default_value = ""
+        value_delimiter = ','
     )]
+    pub scroll_targets: Option<Vec<String>>,
+
+    /// Output format template (e.g. "{player_icon} {status_icon} {title:20} - {artist} [{position}/{length}]")
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
+    /// Metadata format string for tooltip
+    #[arg(long = "tooltip-format")]
+    pub tooltip_format: Option<String>,
+
+    /// Custom icons JSON
+    #[arg(long = "icon-format")]
+    pub icon_format_json: Option<String>,
+
+    /// Switch play/pause icon in output
+    #[arg(long = "switch-icons", action = clap::ArgAction::SetTrue)]
+    pub switch_icons: bool,
+
+    /// Freeze scrolling and reset text when paused
+    #[arg(long = "freeze", action = clap::ArgAction::SetTrue)]
+    pub freeze_on_pause: bool,
+}
+
+/// Fully resolved active configuration used throughout ScrollMPRIS.
+#[derive(Debug, Clone)]
+pub struct Config {
+    /// Scroll speed (0: slow=1000ms, 100: fast=100ms)
+    pub speed: u32,
+    /// Maximum width for the scrolling text
+    pub width: usize,
+    /// Block certain players
+    pub blocked: Vec<String>,
+    /// Scrolling behavior: Marquee, Restart, or Bounce
+    pub scroll_mode: ScrollMode,
+    /// Metadata fields to scroll
     pub scroll_targets: Vec<String>,
-    /// Metadata format string (supports {title}, {artist}, {album}, {player}, {status}, {position}, {length}, or field modifiers like {title:20}, {title:20:bounce}, [scroll:20]{title}[/scroll])
-    #[arg(long = "format", default_value = "{title} - {artist}")]
+    /// Metadata format string
     pub format: String,
     /// Metadata format string for tooltip
-    #[arg(long = "tooltip-format", default_value = "{title} - {artist} | {album}")]
     pub tooltip_format: String,
-    /// Custom icons
-    #[arg(
-        long = "icon-format",
-        default_value = "{\"spotify\": \"\", \"vlc\": \"󰕼\", \"edge\": \"󰇩\", \"firefox\": \"󰈹\", \"mpv\": \"\", \"chrome\": \"\", \"telegramdesktop\": \"\", \"tauon\": \"\", \"404\": \"\"}"
-    )]
-    icon_format_json: String,
-    /// Show track time info
-    #[arg(short = 'p', long = "position", default_value_t = false, action = clap::ArgAction::SetTrue)]
-    pub position_enabled: bool,
-    /// Disable icon in output
-    #[arg(long = "no-icon", default_value_t = false, action = clap::ArgAction::SetTrue)]
-    pub no_icon: bool,
     /// Switch play/pause icon in output
-    #[arg(long = "switch-icons", default_value_t = false, action = clap::ArgAction::SetTrue)]
     pub switch_icons: bool,
-    /// Position style: "increasing" or "remaining"
-    #[arg(long = "position-mode", default_value = "increasing")]
-    pub position_mode: PositionMode,
     /// Freeze scrolling and reset text when paused
-    #[arg(long = "freeze", default_value_t = false, action = clap::ArgAction::SetTrue)]
     pub freeze_on_pause: bool,
-    /// Delay in milliseconds (from speed)
-    #[arg(skip)]
+    /// Delay in milliseconds (computed from speed)
     pub delay: u64,
-    /// Disable status icon
-    #[arg(long = "no-status-icon", default_value_t = false, action = clap::ArgAction::SetTrue)]
-    pub no_status_icon: bool,
-    #[arg(skip)]
+    /// Map of player names to icons
     pub icon_format: HashMap<String, String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let mut config = <Self as clap::Parser>::parse_from(["ScrollMPRIS"]);
-        config.delay = (1000u64)
-            .saturating_sub((config.speed as u64).saturating_mul(9))
-            .max(100);
-        config.blocked = config
-            .blocked
-            .iter()
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect();
-        config.scroll_targets = config
-            .scroll_targets
-            .iter()
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect();
-        config.icon_format = serde_json::from_str(&config.icon_format_json).unwrap();
-        config
+        Self {
+            speed: 0,
+            width: 40,
+            blocked: Vec::new(),
+            scroll_mode: ScrollMode::Marquee,
+            scroll_targets: Vec::new(),
+            format: "{player_icon} {status_icon} {title} - {artist}".to_string(),
+            tooltip_format: "{player_icon} {status_icon} {title} - {artist} | {album}".to_string(),
+            switch_icons: false,
+            freeze_on_pause: false,
+            delay: 1000,
+            icon_format: default_icon_map(),
+        }
     }
+}
+
+/// Resolve candidate paths for `config.toml`.
+pub fn resolve_config_path(custom_path: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = custom_path {
+        return Some(path.to_path_buf());
+    }
+
+    let mut candidate_dirs = Vec::new();
+
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        let xdg_path = PathBuf::from(xdg);
+        candidate_dirs.push(xdg_path.join("ScrollMPRIS"));
+        candidate_dirs.push(xdg_path.join("scrollmpris"));
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let config_home = PathBuf::from(home).join(".config");
+        candidate_dirs.push(config_home.join("ScrollMPRIS"));
+        candidate_dirs.push(config_home.join("scrollmpris"));
+    }
+
+    for dir in candidate_dirs {
+        let file = dir.join("config.toml");
+        if file.is_file() {
+            return Some(file);
+        }
+    }
+
+    None
+}
+
+/// Generates a well-documented sample `config.toml`.
+pub fn generate_default_config_toml() -> &'static str {
+    r#"# =============================================================================
+# ScrollMPRIS Configuration
+# =============================================================================
+# Place this file at ~/.config/ScrollMPRIS/config.toml
+# Or specify a custom path using: ScrollMPRIS --config /path/to/config.toml
+
+# -----------------------------------------------------------------------------
+# General & Scrolling Settings
+# -----------------------------------------------------------------------------
+
+# Scroll speed from 0 (slowest = 1000ms delay) to 100 (fastest = 100ms delay).
+# Formula: delay_ms = max(100, 1000 - speed * 9)
+speed = 0
+
+# Default maximum character width for scrolling text blocks.
+width = 40
+
+# Scrolling behavior: "marquee" (continuous loop), "restart" (loop from start), or "bounce" (back and forth).
+scroll_mode = "marquee"
+
+# Target metadata fields to scroll (e.g. ["title"] or ["title", "artist"]).
+# When empty, scrolling behavior follows the format string directives.
+scroll_targets = []
+
+# Output format string for Waybar.
+# Available tokens:
+#   Metadata:  {title}, {artist}, {album}, {player}, {status}
+#   Icons:     {player_icon}, {status_icon}, {icon}
+#   Timers:    {position} (or {elapsed}), {remaining}, {length} (or {duration})
+# Supports inline modifiers like {title:20}, {title:20:bounce}, and [scroll:20]{title}[/scroll].
+format = "{player_icon} {status_icon} {title} - {artist}"
+
+# Tooltip format string displayed on hover in Waybar.
+tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
+
+# Players to ignore / block (e.g. ["firefox", "chromium", "edge"]).
+blocked = []
+
+# Pause scrolling and reset text to the start when playback is paused.
+freeze_on_pause = false
+
+# -----------------------------------------------------------------------------
+# Icons & Status Indicator
+# -----------------------------------------------------------------------------
+[icons]
+# Invert play/pause icons (playing: , paused:  instead of playing: , paused: ).
+switch_icons = false
+
+# Custom icons per player service name.
+# "404" defines the fallback icon for unmatched players.
+[icons.players]
+spotify = ""
+vlc = "󰕼"
+edge = "󰇩"
+firefox = "󰈹"
+mpv = ""
+chrome = ""
+telegramdesktop = ""
+tauon = ""
+"404" = ""
+"#
 }
 
 impl Config {
-    /// Parse arguments and compute derived fields.
-    pub fn parse() -> Self {
-        let mut config = <Self as Parser>::parse();
-        // Calculate delay from speed (speed 0 = 1000ms, speed 100 = 100ms)
+    /// Applies values loaded from a `ConfigFile` struct into this `Config`.
+    pub fn apply_config_file(&mut self, file: ConfigFile) {
+        if let Some(s) = file.speed {
+            self.speed = s;
+        }
+        if let Some(w) = file.width {
+            self.width = w;
+        }
+        if let Some(b) = file.blocked {
+            self.blocked = b;
+        }
+        if let Some(sm) = file.scroll_mode {
+            self.scroll_mode = sm;
+        }
+        if let Some(st) = file.scroll_targets {
+            self.scroll_targets = st;
+        }
+        if let Some(f) = file.format {
+            self.format = f;
+        }
+        if let Some(tf) = file.tooltip_format {
+            self.tooltip_format = tf;
+        }
+        if let Some(fr) = file.freeze.or(file.freeze_on_pause) {
+            self.freeze_on_pause = fr;
+        }
+        if let Some(si) = file.switch_icons {
+            self.switch_icons = si;
+        }
+
+        if let Some(icons_sec) = file.icons {
+            if let Some(si) = icons_sec.switch_icons {
+                self.switch_icons = si;
+            }
+            if let Some(players) = icons_sec.players {
+                for (k, v) in players {
+                    self.icon_format.insert(k.to_lowercase(), v);
+                }
+            }
+            for (k, v) in icons_sec.extra {
+                if let serde_json::Value::String(icon_str) = v {
+                    self.icon_format.insert(k.to_lowercase(), icon_str);
+                }
+            }
+        }
+    }
+
+    /// Applies command-line argument overrides.
+    pub fn apply_cli_overrides(&mut self, cli: CliArgs) {
+        if let Some(s) = cli.speed {
+            self.speed = s;
+        }
+        if let Some(w) = cli.width {
+            self.width = w;
+        }
+        if let Some(b) = cli.blocked {
+            self.blocked = b;
+        }
+        if let Some(sm) = cli.scroll_mode {
+            self.scroll_mode = sm;
+        }
+        if let Some(st) = cli.scroll_targets {
+            self.scroll_targets = st;
+        }
+        if let Some(f) = cli.format {
+            self.format = f;
+        }
+        if let Some(tf) = cli.tooltip_format {
+            self.tooltip_format = tf;
+        }
+        if cli.freeze_on_pause {
+            self.freeze_on_pause = true;
+        }
+        if cli.switch_icons {
+            self.switch_icons = true;
+        }
+        if let Some(json) = cli.icon_format_json {
+            if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json) {
+                for (k, v) in parsed {
+                    self.icon_format.insert(k.to_lowercase(), v);
+                }
+            } else {
+                eprintln!("Warning: Failed to parse --icon-format JSON string");
+            }
+        }
+    }
+
+    /// Construct `Config` from parsed CLI arguments, merging config file and CLI flags.
+    pub fn from_args(args: CliArgs) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut config = Config::default();
+
+        let config_path = resolve_config_path(args.config.as_deref());
+        if let Some(ref path) = config_path {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                match toml::from_str::<ConfigFile>(&content) {
+                    Ok(file_cfg) => {
+                        config.apply_config_file(file_cfg);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to parse config file at {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
+            } else if args.config.is_some() {
+                eprintln!(
+                    "Warning: Specified config file not found: {}",
+                    path.display()
+                );
+            }
+        }
+
+        config.apply_cli_overrides(args);
+
+        // Compute delay from speed
         config.delay = (1000u64)
             .saturating_sub((config.speed as u64).saturating_mul(9))
             .max(100);
-        // Normalize blocked list
+
+        // Normalize blocked and scroll targets
         config.blocked = config
             .blocked
             .iter()
@@ -124,8 +419,148 @@ impl Config {
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
             .collect();
-        config.icon_format = serde_json::from_str(&config.icon_format_json).unwrap();
-        config
+
+        Ok(config)
+    }
+
+    /// Parse arguments from environment/CLI and load configuration.
+    pub fn parse() -> Self {
+        let args = CliArgs::parse();
+        if args.generate_config {
+            println!("{}", generate_default_config_toml());
+            std::process::exit(0);
+        }
+        Self::from_args(args).unwrap_or_default()
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert_eq!(config.speed, 0);
+        assert_eq!(config.delay, 1000);
+        assert_eq!(config.width, 40);
+        assert_eq!(config.scroll_mode, ScrollMode::Marquee);
+        assert_eq!(
+            config.format,
+            "{player_icon} {status_icon} {title} - {artist}"
+        );
+        assert_eq!(
+            config.tooltip_format,
+            "{player_icon} {status_icon} {title} - {artist} | {album}"
+        );
+        assert!(!config.freeze_on_pause);
+        assert!(!config.switch_icons);
+        assert_eq!(config.icon_format.get("spotify").unwrap(), "");
+    }
+
+    #[test]
+    fn test_parse_toml_config() {
+        let toml_str = r#"
+            speed = 50
+            width = 25
+            scroll_mode = "bounce"
+            scroll_targets = ["title", "artist"]
+            format = "{player_icon} {title:15} | {artist} [{position}] {status_icon}"
+            tooltip_format = "{title} - {artist}"
+            blocked = ["firefox", "chromium"]
+            freeze_on_pause = true
+
+            [icons]
+            switch_icons = true
+
+            [icons.players]
+            foobar = "󰎆"
+            "404" = ""
+        "#;
+
+        let file_cfg: ConfigFile = toml::from_str(toml_str).unwrap();
+        let mut config = Config::default();
+        config.apply_config_file(file_cfg);
+
+        // Apply derived computations
+        config.delay = (1000u64)
+            .saturating_sub((config.speed as u64).saturating_mul(9))
+            .max(100);
+
+        assert_eq!(config.speed, 50);
+        assert_eq!(config.delay, 550);
+        assert_eq!(config.width, 25);
+        assert_eq!(config.scroll_mode, ScrollMode::Bounce);
+        assert_eq!(config.scroll_targets, vec!["title", "artist"]);
+        assert_eq!(
+            config.format,
+            "{player_icon} {title:15} | {artist} [{position}] {status_icon}"
+        );
+        assert_eq!(config.tooltip_format, "{title} - {artist}");
+        assert_eq!(config.blocked, vec!["firefox", "chromium"]);
+        assert!(config.freeze_on_pause);
+        assert!(config.switch_icons);
+        assert_eq!(config.icon_format.get("foobar").unwrap(), "󰎆");
+        assert_eq!(config.icon_format.get("404").unwrap(), "");
+        assert_eq!(config.icon_format.get("spotify").unwrap(), "");
+    }
+
+    #[test]
+    fn test_string_or_array_deserialization() {
+        let toml_str = r#"
+            blocked = "firefox, chrome, mpv"
+            scroll_targets = "title"
+        "#;
+
+        let file_cfg: ConfigFile = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            file_cfg.blocked,
+            Some(vec![
+                "firefox".to_string(),
+                "chrome".to_string(),
+                "mpv".to_string()
+            ])
+        );
+        assert_eq!(file_cfg.scroll_targets, Some(vec!["title".to_string()]));
+    }
+
+    #[test]
+    fn test_cli_overrides_config_file() {
+        let toml_str = r#"
+            speed = 30
+            width = 20
+            scroll_mode = "restart"
+            format = "{title}"
+        "#;
+
+        let file_cfg: ConfigFile = toml::from_str(toml_str).unwrap();
+        let mut config = Config::default();
+        config.apply_config_file(file_cfg);
+
+        // Simulate CLI args overriding speed and format
+        let cli = CliArgs {
+            speed: Some(80),
+            format: Some("{artist} - {title}".to_string()),
+            freeze_on_pause: true,
+            ..Default::default()
+        };
+
+        config.apply_cli_overrides(cli);
+        assert_eq!(config.speed, 80);
+        assert_eq!(config.width, 20); // From config file
+        assert_eq!(config.scroll_mode, ScrollMode::Restart); // From config file
+        assert_eq!(config.format, "{artist} - {title}"); // From CLI
+        assert!(config.freeze_on_pause); // From CLI
+    }
+
+    #[test]
+    fn test_generate_default_config_valid_toml() {
+        let default_toml = generate_default_config_toml();
+        let parsed: Result<ConfigFile, _> = toml::from_str(default_toml);
+        assert!(
+            parsed.is_ok(),
+            "Generated default config must be valid TOML: {:?}",
+            parsed.err()
+        );
+    }
+}

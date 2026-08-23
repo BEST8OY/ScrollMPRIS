@@ -12,8 +12,11 @@ pub enum ScrollDirection {
 }
 
 /// Scroll mode for text output using industry-standard names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default, serde::Deserialize, serde::Serialize,
+)]
 #[clap(rename_all = "kebab-case")]
+#[serde(rename_all = "lowercase")]
 pub enum ScrollMode {
     /// Scrolls text continuously in a ticker loop.
     #[default]

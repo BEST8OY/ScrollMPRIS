@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::config::{Config, PositionMode};
+use crate::config::Config;
 use crate::player::PlayerState;
 use crate::scroll::{ScrollDirection, ScrollMode, ScrollState, scroll_frame};
 
@@ -37,8 +37,40 @@ pub fn extract_player_name(service: &str) -> Option<String> {
     }
 }
 
-/// Retrieve the string value for a metadata token.
-pub fn get_field_value(field: &str, player_state: &PlayerState) -> String {
+/// Retrieve the player brand icon glyph.
+pub fn get_player_icon(
+    player_state: &PlayerState,
+    icon_format: &HashMap<String, String>,
+) -> String {
+    let service = player_state.get_service().unwrap_or("").to_lowercase();
+    icon_format
+        .iter()
+        .find(|(key, _)| service.contains(*key))
+        .map(|(_, icon)| icon.as_str())
+        .unwrap_or_else(|| icon_format.get("404").map(|s| s.as_str()).unwrap_or(""))
+        .to_string()
+}
+
+/// Retrieve the playback state icon glyph.
+pub fn get_status_icon(player_state: &PlayerState, switch_icons: bool) -> String {
+    if !player_state.playing && player_state.title.is_empty() && player_state.artist.is_empty() {
+        return String::new();
+    }
+    if switch_icons {
+        match player_state.playing {
+            true => "".to_string(),
+            false => "".to_string(),
+        }
+    } else {
+        match player_state.playing {
+            true => "".to_string(),
+            false => "".to_string(),
+        }
+    }
+}
+
+/// Retrieve the string value for any format token (metadata, icon, or timer).
+pub fn get_field_value(field: &str, player_state: &PlayerState, config: &Config) -> String {
     match field.to_lowercase().as_str() {
         "title" => player_state.title.clone(),
         "artist" => player_state.artist.clone(),
@@ -48,14 +80,29 @@ pub fn get_field_value(field: &str, player_state: &PlayerState) -> String {
             .and_then(extract_player_name)
             .unwrap_or_default(),
         "status" => player_state.status.clone(),
-        "position" => {
+        "player_icon" | "app_icon" => get_player_icon(player_state, &config.icon_format),
+        "status_icon" | "play_icon" | "state_icon" => {
+            get_status_icon(player_state, config.switch_icons)
+        }
+        "icon" => {
+            let player_icon = get_player_icon(player_state, &config.icon_format);
+            let status_icon = get_status_icon(player_state, config.switch_icons);
+            if !player_icon.is_empty() && !status_icon.is_empty() {
+                format!("{player_icon} {status_icon}")
+            } else {
+                format!("{player_icon}{status_icon}")
+            }
+        }
+        "position" | "elapsed" => {
             let pos = player_state.estimate_position();
             format_position(pos)
         }
-        "length" => player_state
-            .length
-            .map(format_position)
-            .unwrap_or_default(),
+        "remaining" | "countdown" => {
+            let pos = player_state.estimate_position();
+            let remaining = player_state.length.map_or(0.0, |len| (len - pos).max(0.0));
+            format_position(remaining)
+        }
+        "length" | "duration" => player_state.length.map(format_position).unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -99,12 +146,12 @@ pub fn has_field_scroll_directives(format: &str, scroll_targets: &[String]) -> b
 }
 
 /// Formats metadata for tooltip without truncating or scrolling, resolving all fields to full text.
-pub fn format_tooltip(format: &str, player_state: &PlayerState) -> String {
+pub fn format_tooltip(format: &str, player_state: &PlayerState, config: &Config) -> String {
     let unwrapped = BLOCK_RE.replace_all(format, "$2");
     FIELD_RE
         .replace_all(&unwrapped, |caps: &regex::Captures| {
             let field = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-            get_field_value(field, player_state)
+            get_field_value(field, player_state, config)
         })
         .trim()
         .to_string()
@@ -146,41 +193,6 @@ pub fn get_css_classes(player_state: &PlayerState) -> Vec<String> {
     classes
 }
 
-fn get_icon(
-    player_state: &PlayerState,
-    icon_format: &HashMap<String, String>,
-    no_play_icon: bool,
-    switch_icons: bool,
-) -> String {
-    let service = player_state.get_service().unwrap_or("").to_lowercase();
-
-    let service_icon = icon_format
-        .iter()
-        .find(|(key, _)| service.contains(*key))
-        .map(|(_, icon)| icon.as_str())
-        .unwrap_or_else(|| icon_format.get("404").map(|s| s.as_str()).unwrap_or(""));
-
-    let play_icon = if no_play_icon {
-        ""
-    } else if switch_icons {
-        match player_state.playing {
-            true => "",
-            false => "",
-        }
-    } else {
-        match player_state.playing {
-            true => "",
-            false => "",
-        }
-    };
-
-    if !service_icon.is_empty() {
-        format!("{} {}", service_icon, play_icon)
-    } else {
-        play_icon.to_string()
-    }
-}
-
 /// Render scrolled text according to configuration, format directives, and player state.
 pub fn render_scrolled_format(
     config: &Config,
@@ -191,7 +203,7 @@ pub fn render_scrolled_format(
     let is_frozen = config.freeze_on_pause && !player_state.playing;
 
     if !has_field_scroll_directives(&config.format, &config.scroll_targets) {
-        let full_text = format_tooltip(&config.format, player_state);
+        let full_text = format_tooltip(&config.format, player_state, config);
         let state = scroll_states.entry("__full__".to_string()).or_default();
         if is_frozen {
             state.offset = 0;
@@ -209,7 +221,7 @@ pub fn render_scrolled_format(
         let options = caps.get(1).map(|m| m.as_str());
         let inner = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         let (_, width, mode) = parse_scroll_options(options, config.width, config.scroll_mode);
-        let resolved_inner = format_tooltip(inner, player_state);
+        let resolved_inner = format_tooltip(inner, player_state, config);
         let key = format!("block_{block_idx}");
         block_idx += 1;
 
@@ -233,7 +245,7 @@ pub fn render_scrolled_format(
         let (is_explicit_scroll, width, mode) =
             parse_scroll_options(options, config.width, config.scroll_mode);
         let is_target_scroll = config.scroll_targets.contains(&field_lower);
-        let val = get_field_value(&field_lower, player_state);
+        let val = get_field_value(&field_lower, player_state, config);
         let key = format!("{field_lower}_{field_idx}");
         field_idx += 1;
 
@@ -253,28 +265,6 @@ pub fn render_scrolled_format(
     });
 
     rendered.into_owned()
-}
-
-fn get_position_text(config: &Config, player_state: &PlayerState) -> String {
-    if !config.position_enabled {
-        return String::new();
-    }
-
-    let seconds = match config.position_mode {
-        PositionMode::Increasing => player_state.estimate_position(),
-        PositionMode::Remaining => player_state
-            .length
-            .map_or(player_state.estimate_position(), |length| {
-                (length - player_state.estimate_position()).max(0.0)
-            }),
-    };
-
-    let pos_text = format_position(seconds);
-    if !pos_text.is_empty() {
-        format!(" {}", pos_text)
-    } else {
-        String::new()
-    }
 }
 
 /// Print status for the current player, only if output changes.
@@ -307,7 +297,7 @@ pub fn print_status(
     }
 
     let scrolled_text = render_scrolled_format(config, player_state, scroll_states, advance);
-    let tooltip = format_tooltip(&config.tooltip_format, player_state);
+    let tooltip = format_tooltip(&config.tooltip_format, player_state, config);
 
     // If formatted metadata produces empty scrolled text, output valid JSON with empty text.
     if scrolled_text.trim().is_empty() {
@@ -326,20 +316,10 @@ pub fn print_status(
     }
 
     let is_stopped = classes.iter().any(|c| c == "stopped");
-    let position_text = get_position_text(config, player_state);
-
     let output = if is_stopped {
         String::new()
-    } else if config.no_icon {
-        format!("{}{}", scrolled_text, position_text)
     } else {
-        let icon = get_icon(
-            player_state,
-            &config.icon_format,
-            config.no_status_icon,
-            config.switch_icons,
-        );
-        format!("{} {}{}", icon, scrolled_text, position_text)
+        scrolled_text
     };
 
     let json_output: String = serde_json::json!({
@@ -357,7 +337,7 @@ pub fn print_status(
 
 /// Formats time (in seconds) to a mm:ss or hh:mm:ss string.
 pub fn format_position(seconds: f64) -> String {
-    let total_seconds = seconds as i64;
+    let total_seconds = seconds.round().max(0.0) as i64;
     if total_seconds >= 3600 {
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
@@ -440,70 +420,135 @@ mod tests {
     }
 
     #[test]
-    fn test_format_tooltip() {
-        let state = PlayerState {
+    fn test_format_tooltip_with_tokens() {
+        let config = Config::default();
+        let mut state = PlayerState {
             title: "Super Long Song Title".to_string(),
             artist: "Famous Artist".to_string(),
             album: "Hit Album".to_string(),
+            playing: true,
+            length: Some(200.0),
             ..PlayerState::default()
         };
-        let result = format_tooltip("{title:10} - {artist} | {album}", &state);
-        assert_eq!(result, "Super Long Song Title - Famous Artist | Hit Album");
+        state.set_service("org.mpris.MediaPlayer2.spotify");
+
+        let result = format_tooltip(
+            "{player_icon} {status_icon} {title:10} - {artist} | {album} [{position}/{length}]",
+            &state,
+            &config,
+        );
+        assert_eq!(
+            result,
+            "  Super Long Song Title - Famous Artist | Hit Album [00:00/03:20]"
+        );
+    }
+
+    #[test]
+    fn test_icon_tokens_separate_and_combined() {
+        let config = Config::default();
+        let mut state = PlayerState {
+            title: "Song".to_string(),
+            artist: "Artist".to_string(),
+            playing: true,
+            ..PlayerState::default()
+        };
+        state.set_service("org.mpris.MediaPlayer2.spotify");
+
+        assert_eq!(
+            get_field_value("player_icon", &state, &config),
+            ""
+        );
+        assert_eq!(
+            get_field_value("status_icon", &state, &config),
+            ""
+        );
+        assert_eq!(
+            get_field_value("icon", &state, &config),
+            " "
+        );
+    }
+
+    #[test]
+    fn test_timer_tokens() {
+        let config = Config::default();
+        let mut state = PlayerState {
+            title: "Song".to_string(),
+            artist: "Artist".to_string(),
+            playing: true,
+            length: Some(300.0), // 5:00
+            ..PlayerState::default()
+        };
+        state.update_playback_dbus("Playing".to_string(), 75.0, 1.0); // 1:15 elapsed, 3:45 remaining
+
+        assert_eq!(get_field_value("position", &state, &config), "01:15");
+        assert_eq!(get_field_value("elapsed", &state, &config), "01:15");
+        assert_eq!(get_field_value("remaining", &state, &config), "03:45");
+        assert_eq!(get_field_value("countdown", &state, &config), "03:45");
+        assert_eq!(get_field_value("length", &state, &config), "05:00");
+        assert_eq!(get_field_value("duration", &state, &config), "05:00");
     }
 
     #[test]
     fn test_field_aware_scrolling_only_title() {
-        let mut config = Config::default();
-        config.format = "{title:10} - {artist}".to_string();
-        config.scroll_mode = ScrollMode::Marquee;
+        let config = Config {
+            format: "{player_icon} {title:10} - {artist}".to_string(),
+            scroll_mode: ScrollMode::Marquee,
+            ..Default::default()
+        };
 
-        let player_state = PlayerState {
+        let mut player_state = PlayerState {
             title: "Super Long Song Title".to_string(),
             artist: "Artist".to_string(),
             album: "Album".to_string(),
             playing: true,
             ..PlayerState::default()
         };
+        player_state.set_service("org.mpris.MediaPlayer2.spotify");
 
         let mut scroll_states = ScrollStateMap::new();
 
         let frame1 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
-        assert_eq!(frame1, "Super Long - Artist");
+        assert_eq!(frame1, " Super Long - Artist");
 
         let frame2 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
-        assert_eq!(frame2, "uper Long  - Artist");
+        assert_eq!(frame2, " uper Long  - Artist");
 
-        // Artist and " - " did not scroll!
+        // Player icon, artist and " - " did not scroll!
     }
 
     #[test]
     fn test_field_aware_scrolling_targets_cli() {
-        let mut config = Config::default();
-        config.format = "{title} - {artist}".to_string();
-        config.scroll_targets = vec!["title".to_string()];
-        config.width = 10;
-        config.scroll_mode = ScrollMode::Marquee;
+        let config = Config {
+            format: "{player_icon} {title} - {artist}".to_string(),
+            scroll_targets: vec!["title".to_string()],
+            width: 10,
+            scroll_mode: ScrollMode::Marquee,
+            ..Default::default()
+        };
 
-        let player_state = PlayerState {
+        let mut player_state = PlayerState {
             title: "Super Long Song Title".to_string(),
             artist: "Artist".to_string(),
             playing: true,
             ..PlayerState::default()
         };
+        player_state.set_service("org.mpris.MediaPlayer2.spotify");
 
         let mut scroll_states = ScrollStateMap::new();
 
         let frame1 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
-        assert_eq!(frame1, "Super Long - Artist");
+        assert_eq!(frame1, " Super Long - Artist");
 
         let frame2 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
-        assert_eq!(frame2, "uper Long  - Artist");
+        assert_eq!(frame2, " uper Long  - Artist");
     }
 
     #[test]
     fn test_field_aware_multiple_fields_different_modes() {
-        let mut config = Config::default();
-        config.format = "{title:6:marquee} | {artist:4:bounce}".to_string();
+        let config = Config {
+            format: "{title:6:marquee} | {artist:4:bounce}".to_string(),
+            ..Default::default()
+        };
 
         let player_state = PlayerState {
             title: "ABCDEFG".to_string(),
@@ -523,9 +568,11 @@ mod tests {
 
     #[test]
     fn test_field_aware_block_scroll() {
-        let mut config = Config::default();
-        config.format = "[scroll:10]{title} - {artist}[/scroll] | {album}".to_string();
-        config.scroll_mode = ScrollMode::Marquee;
+        let config = Config {
+            format: "[scroll:10]{title} - {artist}[/scroll] | {album}".to_string(),
+            scroll_mode: ScrollMode::Marquee,
+            ..Default::default()
+        };
 
         let player_state = PlayerState {
             title: "Song".to_string(),
@@ -591,19 +638,22 @@ mod tests {
 
     #[test]
     fn test_constant_rendered_length_during_marquee_scroll() {
-        let mut config = Config::default();
-        config.format = "{title:15:marquee} | {artist}".to_string();
-        config.scroll_mode = ScrollMode::Marquee;
+        let config = Config {
+            format: "{player_icon} {title:15:marquee} | {artist}".to_string(),
+            scroll_mode: ScrollMode::Marquee,
+            ..Default::default()
+        };
 
-        let player_state = PlayerState {
+        let mut player_state = PlayerState {
             title: "Super Long Song Title That Exceeds Width".to_string(),
             artist: "Fixed Artist".to_string(),
             playing: true,
             ..PlayerState::default()
         };
+        player_state.set_service("org.mpris.MediaPlayer2.spotify");
 
         let mut scroll_states = ScrollStateMap::new();
-        let expected_len = 15 + " | Fixed Artist".chars().count();
+        let expected_len = " ".chars().count() + 15 + " | Fixed Artist".chars().count();
 
         // Run through multiple full scroll cycles and ensure every single frame has exact constant character count
         for _ in 0..50 {
@@ -617,4 +667,3 @@ mod tests {
         }
     }
 }
-
