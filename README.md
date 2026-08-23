@@ -15,7 +15,7 @@ A fast, async, scrolling MPRIS module for [Waybar](https://github.com/Alexays/Wa
 - **Rate-Adjusted Position Estimation**: Dynamic position tracking accurately scaled by player playback rate.
 - **Pure Token-Driven Layout**: Place player icons, status glyphs, and timers anywhere within your format template.
 - **Configurable Scrolling**: Industry-standard scrolling modes (`marquee`, `restart`, `bounce`) with configurable speed, width, and pauses.
-- **Field-Aware Scrolling**: Scroll individual fields independently (e.g. `{title:20} - {artist}`) or target specific fields via `--scroll-targets`.
+- **Field-Aware Scrolling**: Scroll individual fields independently (e.g. `{title:20} - {artist}`) with inline width and mode controls.
 - **TOML Configuration File**: Persistent settings at `~/.config/ScrollMPRIS/config.toml` with automatic XDG resolution.
 
 ---
@@ -81,7 +81,6 @@ ScrollMPRIS --generate-config > ~/.config/ScrollMPRIS/config.toml
 speed = 50                              # 0 (1000ms delay) to 100 (100ms delay)
 width = 40                              # Default max width for scrolling text
 scroll_mode = "marquee"                 # "marquee", "restart", or "bounce"
-scroll_targets = ["title", "artist"]    # Target fields (or string "title, artist")
 format = "{player_icon} {status_icon} {title:20:marquee} | {artist:12:bounce} [{position}/{length}]"
 tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
 blocked = ["firefox", "chromium"]       # Blocked player names
@@ -202,8 +201,6 @@ Scroll individual metadata fields independently while keeping other text static:
    - `{title:15:marquee} | {artist:10:bounce}`: `{title}` and `{artist}` scroll independently with their own widths and modes!
 2. **Scroll Tag Blocks**:
    - `[scroll:25]{title} - {artist}[/scroll] | {album}`: Scrolls the combined title and artist within 25 characters, leaving album static.
-3. **CLI Targets Flag**:
-   - `--scroll-targets title`: With `--format "{title} - {artist}" -w 20`, only `{title}` scrolls up to 20 characters.
 
 ---
 
@@ -218,8 +215,7 @@ All CLI options can be used as one-off overrides or standalone:
 | `-s`, `--speed <0-100>` | Scroll speed (0: slow=1000ms, 100: fast=100ms) | `-s 50` |
 | `-w`, `--width <number>` | Maximum width for scrolling text | `-w 40` |
 | `-b`, `--blocked <list>` | Block certain players (comma-separated, case-insensitive) | `-b edge,firefox,mpv` |
-| `--scroll <mode>` | Scrolling behavior: `marquee`, `restart`, or `bounce` | `--scroll marquee` |
-| `--scroll-targets <fields>` | Metadata fields to scroll (e.g. `title` or `title,artist`) | `--scroll-targets title` |
+| `--scroll <mode>` | Default scrolling behavior: `marquee`, `restart`, or `bounce` | `--scroll marquee` |
 | `--format <string>` | Output format template | `--format '{player_icon} {title:20} - {artist}'` |
 | `--tooltip-format <string>` | Tooltip metadata format (resolves all fields un-scrolled) | `--tooltip-format '{title} - {artist} \| {album}'` |
 | `--icon-format <string>` | Icon format mapping as JSON. `"404"` defines fallback icon | `--icon-format '{"404": "", "spotify": ""}'` |

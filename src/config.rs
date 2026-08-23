@@ -21,7 +21,7 @@ pub fn default_icon_map() -> HashMap<String, String> {
     map
 }
 
-/// Helper deserializer for string-or-array fields like `blocked` or `scroll_targets`.
+/// Helper deserializer for string-or-array fields like `blocked`.
 fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -66,8 +66,6 @@ pub struct ConfigFile {
     #[serde(deserialize_with = "deserialize_string_or_vec", default)]
     pub blocked: Option<Vec<String>>,
     pub scroll_mode: Option<ScrollMode>,
-    #[serde(deserialize_with = "deserialize_string_or_vec", default)]
-    pub scroll_targets: Option<Vec<String>>,
     pub format: Option<String>,
     pub tooltip_format: Option<String>,
     pub freeze: Option<bool>,
@@ -110,19 +108,9 @@ pub struct CliArgs {
     )]
     pub blocked: Option<Vec<String>>,
 
-    /// Scrolling behavior: "marquee", "restart", or "bounce"
+    /// Default scrolling behavior: "marquee", "restart", or "bounce"
     #[arg(long = "scroll", value_enum)]
     pub scroll_mode: Option<ScrollMode>,
-
-    /// Metadata fields to scroll (comma-separated, e.g. "title" or "title,artist").
-    /// If omitted and format contains no field directives, the full formatted string scrolls.
-    #[arg(
-        long = "scroll-targets",
-        alias = "scroll-field",
-        alias = "scroll-fields",
-        value_delimiter = ','
-    )]
-    pub scroll_targets: Option<Vec<String>>,
 
     /// Output format template (e.g. "{player_icon} {status_icon} {title:20} - {artist} [{position}/{length}]")
     #[arg(long = "format")]
@@ -156,8 +144,6 @@ pub struct Config {
     pub blocked: Vec<String>,
     /// Scrolling behavior: Marquee, Restart, or Bounce
     pub scroll_mode: ScrollMode,
-    /// Metadata fields to scroll
-    pub scroll_targets: Vec<String>,
     /// Metadata format string
     pub format: String,
     /// Metadata format string for tooltip
@@ -179,7 +165,6 @@ impl Default for Config {
             width: 40,
             blocked: Vec::new(),
             scroll_mode: ScrollMode::Marquee,
-            scroll_targets: Vec::new(),
             format: "{player_icon} {status_icon} {title} - {artist}".to_string(),
             tooltip_format: "{player_icon} {status_icon} {title} - {artist} | {album}".to_string(),
             switch_icons: false,
@@ -239,12 +224,8 @@ speed = 0
 # Default maximum character width for scrolling text blocks.
 width = 40
 
-# Scrolling behavior: "marquee" (continuous loop), "restart" (loop from start), or "bounce" (back and forth).
+# Default scrolling behavior: "marquee" (continuous loop), "restart" (loop from start), or "bounce" (back and forth).
 scroll_mode = "marquee"
-
-# Target metadata fields to scroll (e.g. ["title"] or ["title", "artist"]).
-# When empty, scrolling behavior follows the format string directives.
-scroll_targets = []
 
 # Output format string for Waybar.
 # Available tokens:
@@ -300,9 +281,6 @@ impl Config {
         if let Some(sm) = file.scroll_mode {
             self.scroll_mode = sm;
         }
-        if let Some(st) = file.scroll_targets {
-            self.scroll_targets = st;
-        }
         if let Some(f) = file.format {
             self.format = f;
         }
@@ -346,9 +324,6 @@ impl Config {
         }
         if let Some(sm) = cli.scroll_mode {
             self.scroll_mode = sm;
-        }
-        if let Some(st) = cli.scroll_targets {
-            self.scroll_targets = st;
         }
         if let Some(f) = cli.format {
             self.format = f;
@@ -406,15 +381,9 @@ impl Config {
             .saturating_sub((config.speed as u64).saturating_mul(9))
             .max(100);
 
-        // Normalize blocked and scroll targets
+        // Normalize blocked
         config.blocked = config
             .blocked
-            .iter()
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect();
-        config.scroll_targets = config
-            .scroll_targets
             .iter()
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
@@ -464,7 +433,6 @@ mod tests {
             speed = 50
             width = 25
             scroll_mode = "bounce"
-            scroll_targets = ["title", "artist"]
             format = "{player_icon} {title:15} | {artist} [{position}] {status_icon}"
             tooltip_format = "{title} - {artist}"
             blocked = ["firefox", "chromium"]
@@ -491,7 +459,6 @@ mod tests {
         assert_eq!(config.delay, 550);
         assert_eq!(config.width, 25);
         assert_eq!(config.scroll_mode, ScrollMode::Bounce);
-        assert_eq!(config.scroll_targets, vec!["title", "artist"]);
         assert_eq!(
             config.format,
             "{player_icon} {title:15} | {artist} [{position}] {status_icon}"
@@ -509,7 +476,6 @@ mod tests {
     fn test_string_or_array_deserialization() {
         let toml_str = r#"
             blocked = "firefox, chrome, mpv"
-            scroll_targets = "title"
         "#;
 
         let file_cfg: ConfigFile = toml::from_str(toml_str).unwrap();
@@ -521,7 +487,6 @@ mod tests {
                 "mpv".to_string()
             ])
         );
-        assert_eq!(file_cfg.scroll_targets, Some(vec!["title".to_string()]));
     }
 
     #[test]

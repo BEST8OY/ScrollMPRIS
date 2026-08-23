@@ -134,11 +134,8 @@ pub fn parse_scroll_options(
     (is_scroll, width, mode)
 }
 
-/// Check if the format string or CLI configuration requests field-aware scrolling.
-pub fn has_field_scroll_directives(format: &str, scroll_targets: &[String]) -> bool {
-    if !scroll_targets.is_empty() {
-        return true;
-    }
+/// Check if the format string requests field-aware scrolling.
+pub fn has_field_scroll_directives(format: &str) -> bool {
     if format.contains("[scroll") {
         return true;
     }
@@ -202,7 +199,7 @@ pub fn render_scrolled_format(
 ) -> String {
     let is_frozen = config.freeze_on_pause && !player_state.playing;
 
-    if !has_field_scroll_directives(&config.format, &config.scroll_targets) {
+    if !has_field_scroll_directives(&config.format) {
         let full_text = format_tooltip(&config.format, player_state, config);
         let state = scroll_states.entry("__full__".to_string()).or_default();
         if is_frozen {
@@ -244,12 +241,11 @@ pub fn render_scrolled_format(
         let field_lower = field.to_lowercase();
         let (is_explicit_scroll, width, mode) =
             parse_scroll_options(options, config.width, config.scroll_mode);
-        let is_target_scroll = config.scroll_targets.contains(&field_lower);
         let val = get_field_value(&field_lower, player_state, config);
         let key = format!("{field_lower}_{field_idx}");
         field_idx += 1;
 
-        if is_explicit_scroll || is_target_scroll {
+        if is_explicit_scroll {
             let state = scroll_states.entry(key).or_default();
             if is_frozen {
                 state.offset = 0;
@@ -514,33 +510,6 @@ mod tests {
         assert_eq!(frame2, " uper Long  - Artist");
 
         // Player icon, artist and " - " did not scroll!
-    }
-
-    #[test]
-    fn test_field_aware_scrolling_targets_cli() {
-        let config = Config {
-            format: "{player_icon} {title} - {artist}".to_string(),
-            scroll_targets: vec!["title".to_string()],
-            width: 10,
-            scroll_mode: ScrollMode::Marquee,
-            ..Default::default()
-        };
-
-        let mut player_state = PlayerState {
-            title: "Super Long Song Title".to_string(),
-            artist: "Artist".to_string(),
-            playing: true,
-            ..PlayerState::default()
-        };
-        player_state.set_service("org.mpris.MediaPlayer2.spotify");
-
-        let mut scroll_states = ScrollStateMap::new();
-
-        let frame1 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
-        assert_eq!(frame1, " Super Long - Artist");
-
-        let frame2 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
-        assert_eq!(frame2, " uper Long  - Artist");
     }
 
     #[test]
