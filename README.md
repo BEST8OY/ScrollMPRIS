@@ -1,114 +1,33 @@
 # ScrollMPRIS
 
-A fast, async, scrolling MPRIS module for [Waybar](https://github.com/Alexays/Waybar) written in pure Rust using `zbus 5` and `tokio`.
+[![Rust 2024](https://img.shields.io/badge/Rust-2024_Edition-orange.svg?logo=rust)](https://www.rust-lang.org/)
+[![D-Bus](https://img.shields.io/badge/D--Bus-zbus_5-blue.svg?logo=linux)](https://crates.io/crates/zbus)
+[![Async Runtime](https://img.shields.io/badge/Async-Tokio-black.svg?logo=tokio)](https://tokio.rs/)
+[![AUR version](https://img.shields.io/aur/version/scrollmpris-git.svg)](https://aur.archlinux.org/packages/scrollmpris-git)
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](LICENSE)
 
-> **Note:** This project was generated and improved with the help of AI.
+A fast, async, pure Rust scrolling MPRIS module for [Waybar](https://github.com/Alexays/Waybar) powered by `zbus 5` and `tokio`.
 
 ---
 
-## Features
+## ✨ Features
 
 - **Pure Rust Async D-Bus (`zbus 5`)**: Zero C library dependencies (`libdbus-1` not required).
-- **Dual-Tier Player Discovery**: Prefers `playerctld` for recency-ordered player discovery, with automatic fallback to standard D-Bus daemon player discovery.
-- **Real-Time Lifecycle Tracking**: Instant UI reaction to player launch, exit, and handoff via D-Bus `NameOwnerChanged` signals.
-- **Multi-Artist & Album Support**: Preserves and formats all collaborating/featured artists and album fields (`xesam:artist` joined with commas).
-- **Rate-Adjusted Position Estimation**: Dynamic position tracking accurately scaled by player playback rate.
-- **Pure Token-Driven Layout**: Place player icons, status glyphs, and timers anywhere within your format template.
-- **Configurable Scrolling**: Industry-standard scrolling modes (`marquee`, `restart`, `bounce`) with configurable speed, width, and pauses.
-- **Field-Aware Scrolling**: Scroll individual fields independently (e.g. `{title:20} - {artist}`) with inline width and mode controls.
-- **TOML Configuration File**: Persistent settings at `~/.config/ScrollMPRIS/config.toml` with automatic XDG resolution.
+- **Dual-Tier Player Discovery**: Prefers `playerctld` for recency-ordered player prioritization, with automatic fallback to standard D-Bus discovery.
+- **Real-Time Lifecycle Tracking**: Instant UI response to player startup, exit, and handoff via D-Bus `NameOwnerChanged` signals.
+- **Multi-Artist & Album Support**: Formats collaborating/featured artists (`xesam:artist` joined with commas) and album metadata.
+- **Rate-Adjusted Position Estimation**: Sub-second accurate elapsed & countdown timers dynamically adjusted by playback speed.
+- **Pure Token-Driven Layout**: 100% template-controlled output. Place brand icons, state glyphs, timers, and metadata anywhere.
+- **Field-Aware Inline Scrolling**: Scroll individual fields independently (e.g. `{title:20:marquee} | {artist:12:bounce}`).
+- **Industry-Standard Scrolling Modes**: `marquee` (continuous ticker), `restart` (loop with hold), and `bounce` (pendulum back & forth).
+- **TOML Configuration File**: Persistent declarative settings at `~/.config/ScrollMPRIS/config.toml` with automatic XDG resolution.
+- **Freeze on Pause**: Option to freeze the ticker and snap text back to the start when music is paused.
 
 ---
 
-## Prerequisites
+## ⚡ Quick Start (Waybar)
 
-- **D-Bus Session Bus**: Standard desktop session bus for MPRIS communication.
-- **playerctl / playerctld (Optional)**: If `playerctld` is running, ScrollMPRIS uses it to prioritize the most recently active player. If absent, standard MPRIS discovery is used seamlessly.
-- **Cargo / Rust**: Build toolchain (Rust 2024 edition).
-
----
-
-## Installation & Build
-
-### Arch User Repository (AUR)
-
-You can install ScrollMPRIS using an AUR helper such as `yay` or `paru`:
-
-```bash
-yay -S scrollmpris-git
-```
-
-### Manual Build
-
-1. **Clone the Repository:**
-
-   ```bash
-   git clone https://github.com/BEST8OY/ScrollMPRIS.git
-   cd ScrollMPRIS
-   ```
-
-2. **Build the Project:**
-
-   ```bash
-   cargo build --release
-   ```
-
-3. **Install the Binary:**
-
-   ```bash
-   install -Dt /usr/local/bin target/release/ScrollMPRIS
-   ```
-
----
-
-## Configuration File (`config.toml`)
-
-ScrollMPRIS supports persistent configuration via TOML. Instead of passing long command-line arguments, define your settings in `~/.config/ScrollMPRIS/config.toml` (or `~/.config/scrollmpris/config.toml`).
-
-### Generate Default Configuration
-
-Generate a fully commented default configuration file with a single command:
-
-```bash
-mkdir -p ~/.config/ScrollMPRIS
-ScrollMPRIS --generate-config > ~/.config/ScrollMPRIS/config.toml
-```
-
-### Example `config.toml`
-
-```toml
-# General settings
-speed = 50                              # 0 (1000ms delay) to 100 (100ms delay)
-width = 40                              # Default max width for scrolling text
-scroll_mode = "marquee"                 # "marquee", "restart", or "bounce"
-format = "{player_icon} {status_icon} {title:20:marquee} | {artist:12:bounce} [{position}/{length}]"
-tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
-blocked = ["firefox", "chromium"]       # Blocked player names
-freeze_on_pause = true                  # Pause ticker when playback is paused
-
-# Icon settings
-[icons]
-
-# Status glyphs for playback states
-[icons.status]
-playing = ""
-paused = ""
-stopped = ""
-
-# Player-specific icons (replaces 404 for unmatched players)
-[icons.players]
-spotify = ""
-vlc = "󰕼"
-firefox = "󰈹"
-mpv = ""
-"404" = ""
-```
-
----
-
-## Waybar Integration
-
-With a configuration file in place, your Waybar configuration (`~/.config/waybar/config`) stays clean and simple:
+### 1. Add to Waybar Config (`~/.config/waybar/config`)
 
 ```json
 "custom/ScrollMPRIS": {
@@ -121,12 +40,167 @@ With a configuration file in place, your Waybar configuration (`~/.config/waybar
 }
 ```
 
+### 2. Add to Waybar Module Bar
+
+Include `"custom/ScrollMPRIS"` in your `modules-left`, `modules-center`, or `modules-right`.
+
+---
+
+## ⚙️ Configuration File (`config.toml`)
+
+ScrollMPRIS automatically reads `~/.config/ScrollMPRIS/config.toml` (or `~/.config/scrollmpris/config.toml`).
+
+### Generate Default Configuration
+
+Generate a fully commented TOML configuration file with one command:
+
+```bash
+mkdir -p ~/.config/ScrollMPRIS
+ScrollMPRIS --generate-config > ~/.config/ScrollMPRIS/config.toml
+```
+
+### Example `config.toml`
+
+```toml
+# General settings
+speed = 50                              # 0 (1000ms delay) to 100 (100ms delay)
+width = 40                              # Default max character width for scrolling text
+scroll_mode = "marquee"                 # Default mode: "marquee", "restart", or "bounce"
+format = "{player_icon} {status_icon} {title:20:marquee} | {artist:12:bounce} [{position}/{length}]"
+tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
+blocked = ["firefox", "chromium"]       # Ignore audio from specific players
+freeze_on_pause = true                  # Pause ticker and reset to start when paused
+
+# Icon settings
+[icons]
+
+# Status glyphs for playback states
+[icons.status]
+playing = ""
+paused = ""
+stopped = ""
+
+# Player-specific brand icons (fallback icon is "404")
+[icons.players]
+spotify = ""
+vlc = "󰕼"
+firefox = "󰈹"
+mpv = ""
+chrome = ""
+edge = "󰇩"
+telegramdesktop = ""
+tauon = ""
+"404" = ""
+```
+
 > [!TIP]
-> Any CLI argument passed directly in Waybar or terminal (such as `ScrollMPRIS --speed 80`) will dynamically override the settings in `config.toml`.
+> Any CLI argument passed directly in Waybar or terminal (such as `ScrollMPRIS --speed 80`) dynamically overrides `config.toml`.
 
-### Styling with CSS
+---
 
-Customize the appearance in your Waybar stylesheet (`~/.config/waybar/style.css`):
+## 🏷️ Supported Format Tokens
+
+ScrollMPRIS is **100% token-driven**: you control exactly where each element appears.
+
+| Category | Token | Aliases | Description | Example Output |
+| :--- | :--- | :--- | :--- | :--- |
+| **Icons** | `{player_icon}` | `{app_icon}` | Player brand glyph | `` (Spotify), `󰕼` (VLC), `󰈹` (Firefox) |
+| | `{status_icon}` | `{play_icon}`, `{state_icon}` | Playback status glyph | `` (Playing), `` (Paused) |
+| | `{icon}` | | Combined `{player_icon} {status_icon}` | ` ` |
+| **Timers** | `{position}` | `{elapsed}` | Current playback elapsed time | `01:23` |
+| | `{remaining}` | `{countdown}` | Remaining track countdown | `02:45` |
+| | `{length}` | `{duration}` | Total track duration | `04:08` |
+| **Metadata** | `{title}` | | Track title | `Blinding Lights` |
+| | `{artist}` | | Track artist(s) (comma-joined) | `The Weeknd` |
+| | `{album}` | | Track album name | `After Hours` |
+| | `{player}` | | Clean player service name | `spotify` |
+| | `{status}` | | Raw playback status | `Playing` / `Paused` |
+
+---
+
+## 🔄 Field-Aware Scrolling & Modifiers
+
+Scroll individual metadata fields independently while keeping other elements static:
+
+### 1. Inline Field Modifiers: `{field:width[:mode]}`
+- `{title:20}`: Only `{title}` scrolls within 20 characters; `{artist}` stays fixed.
+- `{title:20:bounce}`: `{title}` scrolls within 20 characters using `bounce` animation.
+- `{title:15:marquee} | {artist:10:bounce}`: Title and artist scroll independently with separate widths and animation styles!
+
+### 2. Block Scrolling: `[scroll:width[:mode]]...[/scroll]`
+- `[scroll:25]{title} - {artist}[/scroll] | {album}`: Scrolls the combined title and artist block within 25 characters, leaving album fixed.
+
+### 3. Whole-String Scrolling (Default Fallback)
+- If no inline modifiers are present (e.g. `format = "{player_icon} {status_icon} {title} - {artist}"`), the entire formatted output scrolls up to `width` characters.
+
+---
+
+## 🎬 Scrolling Modes
+
+| Mode | Description |
+| :--- | :--- |
+| **`marquee`** *(default)* | Seamless circular continuous ticker loop with separator padding. |
+| **`restart`** | Smooth left-to-right scroll, holds at the end, and snaps back to start. |
+| **`bounce`** | Scrolls to the end, holds, reverses direction back to start, holds, and repeats. |
+
+---
+
+## 🛠️ Command-Line Options
+
+| Option | Description | Example |
+| :--- | :--- | :--- |
+| `-c`, `--config <path>` | Path to custom TOML configuration file | `-c ~/my-config.toml` |
+| `--generate-config` | Output default configuration TOML to stdout and exit | `ScrollMPRIS --generate-config` |
+| `-s`, `--speed <0-100>` | Scroll speed (0: slow=1000ms delay, 100: fast=100ms delay) | `-s 50` |
+| `-w`, `--width <number>` | Maximum character width for scrolling text | `-w 40` |
+| `-b`, `--blocked <list>` | Block specific players (comma-separated, case-insensitive) | `-b edge,firefox,mpv` |
+| `--scroll <mode>` | Default scrolling behavior: `marquee`, `restart`, or `bounce` | `--scroll marquee` |
+| `--format <string>` | Output format template | `--format '{player_icon} {title:20} - {artist}'` |
+| `--tooltip-format <string>` | Tooltip format (resolves all fields un-scrolled on hover) | `--tooltip-format '{title} - {artist} \| {album}'` |
+| `--icon-format <string>` | Override player brand icons via JSON mapping | `--icon-format '{"404": "", "spotify": ""}'` |
+| `--freeze` | Pause scrolling and reset text to start when paused | `--freeze` |
+
+---
+
+## 💡 Configuration Recipes & Examples
+
+### 1. Default Clean Ticker
+```bash
+ScrollMPRIS --format '{player_icon} {status_icon} {title:20} - {artist}'
+```
+
+### 2. Status Glyph at the End with Duration
+```bash
+ScrollMPRIS --format '{player_icon} {title:20:marquee} - {artist} [{position}/{length}] {status_icon}'
+```
+
+### 3. Countdown Remaining Time
+```bash
+ScrollMPRIS --format '{player_icon} {title:20:bounce} - {artist} (-{remaining})'
+```
+
+### 4. Minimalist (Status Glyph Only)
+```bash
+ScrollMPRIS --format '{status_icon} {title:25} - {artist}'
+```
+
+### 5. Plain Text (No Icons)
+```bash
+ScrollMPRIS --format '{title:20} - {artist} [{position}]'
+```
+
+### 6. Dual-Field Independent Scrolling
+```bash
+ScrollMPRIS -s 50 --format '{player_icon} {title:15:marquee} | {artist:10:bounce} {status_icon}'
+```
+
+---
+
+## 🎨 Waybar CSS Styling
+
+ScrollMPRIS tags the Waybar JSON output with CSS classes matching playback status and player service name (e.g. `playing`, `paused`, `stopped`, `spotify`, `firefox`).
+
+Customize your `~/.config/waybar/style.css`:
 
 ```css
 #custom-ScrollMPRIS {
@@ -164,111 +238,26 @@ Customize the appearance in your Waybar stylesheet (`~/.config/waybar/style.css`
 
 ---
 
-## Supported Format Tokens
+## 📦 Installation & Build
 
-ScrollMPRIS is **100% token-driven**: you control exactly where icons, metadata, and timers appear in the output.
+### Arch User Repository (AUR)
 
-| Category | Token | Aliases | Description | Example Output |
-| :--- | :--- | :--- | :--- | :--- |
-| **Icons** | `{player_icon}` | `{app_icon}` | Player brand icon | `` (Spotify), `󰕼` (VLC), `󰈹` (Firefox) |
-| | `{status_icon}` | `{play_icon}`, `{state_icon}` | Play/pause status glyph | `` (Playing), `` (Paused) |
-| | `{icon}` | | Combined player and status icon | ` ` |
-| **Timers** | `{position}` | `{elapsed}` | Current playback position | `01:23` |
-| | `{remaining}` | `{countdown}` | Remaining countdown time | `02:45` |
-| | `{length}` | `{duration}` | Total track duration | `04:08` |
-| **Metadata** | `{title}` | | Track title | `Blinding Lights` |
-| | `{artist}` | | Track artist(s) | `The Weeknd` |
-| | `{album}` | | Album name | `After Hours` |
-| | `{player}` | | Player process name | `spotify` |
-| | `{status}` | | Raw playback status text | `Playing` / `Paused` |
-
----
-
-## Scrolling Modes
-
-ScrollMPRIS supports three industry-standard scrolling behaviors:
-
-| Mode | Description |
-| :--- | :--- |
-| **`marquee`** *(default)* | Continuous seamless circular ticker loop with separator spacing. |
-| **`restart`** | Scrolls from left to right, holds at the end, and restarts back at the beginning. |
-| **`bounce`** | Scrolls to the end, holds, reverses direction back to start, holds, and repeats. |
-
----
-
-## Field-Aware Scrolling
-
-Scroll individual metadata fields independently while keeping other text static:
-
-1. **Inline Field Width & Mode**:
-   - `{title:20}`: Only `{title}` scrolls within 20 characters; `{artist}` remains static.
-   - `{title:20:bounce}`: Only `{title}` scrolls at width 20 using `bounce` mode.
-   - `{title:15:marquee} | {artist:10:bounce}`: `{title}` and `{artist}` scroll independently with their own widths and modes!
-2. **Scroll Tag Blocks**:
-   - `[scroll:25]{title} - {artist}[/scroll] | {album}`: Scrolls the combined title and artist within 25 characters, leaving album static.
-
----
-
-## Command-Line Options
-
-All CLI options can be used as one-off overrides or standalone:
-
-| Option | Description | Example |
-| :--- | :--- | :--- |
-| `-c`, `--config <path>` | Path to custom TOML configuration file | `-c ~/my-config.toml` |
-| `--generate-config` | Output default configuration TOML to stdout and exit | `ScrollMPRIS --generate-config` |
-| `-s`, `--speed <0-100>` | Scroll speed (0: slow=1000ms, 100: fast=100ms) | `-s 50` |
-| `-w`, `--width <number>` | Maximum width for scrolling text | `-w 40` |
-| `-b`, `--blocked <list>` | Block certain players (comma-separated, case-insensitive) | `-b edge,firefox,mpv` |
-| `--scroll <mode>` | Default scrolling behavior: `marquee`, `restart`, or `bounce` | `--scroll marquee` |
-| `--format <string>` | Output format template | `--format '{player_icon} {title:20} - {artist}'` |
-| `--tooltip-format <string>` | Tooltip metadata format (resolves all fields un-scrolled) | `--tooltip-format '{title} - {artist} \| {album}'` |
-| `--icon-format <string>` | Icon format mapping as JSON. `"404"` defines fallback icon | `--icon-format '{"404": "", "spotify": ""}'` |
-| `--freeze` | Pause scrolling and reset text when playback is paused | `--freeze` |
-
----
-
-## Configuration Recipes & Examples
-
-### 1. Default Clean Ticker
-Player brand icon, play/pause state glyph, and track info:
 ```bash
-ScrollMPRIS --format '{player_icon} {status_icon} {title:20} - {artist}'
+yay -S scrollmpris-git
 ```
 
-### 2. Status Icon at the End with Elapsed / Total Time
-Place the play/pause glyph at the far right with embedded track timers:
-```bash
-ScrollMPRIS --format '{player_icon} {title:20:marquee} - {artist} [{position}/{length}] {status_icon}'
-```
+### Manual Build from Source
 
-### 3. Countdown Remaining Time
-Show time left in track:
 ```bash
-ScrollMPRIS --format '{player_icon} {title:20:bounce} - {artist} (-{remaining})'
-```
-
-### 4. Status Icon Only (Minimalist)
-Omit the player icon entirely without any special flags:
-```bash
-ScrollMPRIS --format '{status_icon} {title:25} - {artist}'
-```
-
-### 5. Plain Text Only (No Icons)
-Simple text output:
-```bash
-ScrollMPRIS --format '{title:20} - {artist} [{position}]'
-```
-
-### 6. Independent Dual-Field Scrolling with Different Modes
-Title scrolls in continuous `marquee` (15 chars) while artist scrolls in `bounce` (10 chars):
-```bash
-ScrollMPRIS -s 50 --format '{player_icon} {title:15:marquee} | {artist:10:bounce} {status_icon}'
+git clone https://github.com/BEST8OY/ScrollMPRIS.git
+cd ScrollMPRIS
+cargo build --release
+install -Dt /usr/local/bin target/release/ScrollMPRIS
 ```
 
 ---
 
-## Preview
+## 🖼️ Preview
 
 **Restart mode:**
 
@@ -280,18 +269,6 @@ ScrollMPRIS -s 50 --format '{player_icon} {title:15:marquee} | {artist:10:bounce
 
 ---
 
-## Process Tracking
+## 📄 License
 
-The running process PID is written to `/tmp/scrollbarmpris/{timestamp}.pid` for easy instance management.
-
----
-
-## Contributing
-
-Contributions, feature requests, and issue reports are welcome! Feel free to open an issue or submit a pull request.
-
----
-
-## License
-
-Unlicense. See [LICENSE](LICENSE) for details.
+This project is dedicated to the public domain under the [Unlicense](LICENSE).
