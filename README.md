@@ -123,13 +123,16 @@ ScrollMPRIS is **100% token-driven**: you control exactly where each element app
 
 Scroll individual metadata fields independently while keeping other elements static:
 
-### 1. Inline Field Modifiers: `{field:width[:mode]}`
-- `{title:20}`: Only `{title}` scrolls within 20 characters; `{artist}` stays fixed.
-- `{title:20:bounce}`: `{title}` scrolls within 20 characters using `bounce` animation.
+### 1. Inline Field Modifiers: `{field:width}` / `{field:mode}` / `{field:width:mode}`
+- `{title:20}`: Scrolls `{title}` within 20 characters (using default mode); `{artist}` stays fixed.
+- `{title:bounce}`: Scrolls `{title}` with `bounce` animation using the global `width`.
+- `{title:20:bounce}`: Scrolls `{title}` within 20 characters using `bounce` animation.
 - `{title:15:marquee} | {artist:10:bounce}`: Title and artist scroll independently with separate widths and animation styles!
 
-### 2. Block Scrolling: `[scroll:width[:mode]]...[/scroll]`
-- `[scroll:25]{title} - {artist}[/scroll] | {album}`: Scrolls the combined title and artist block within 25 characters, leaving album fixed.
+### 2. Block Scrolling: `[scroll]...[/scroll]` / `[scroll:width]` / `[scroll:width:mode]`
+- `[scroll]{title} - {artist}[/scroll]`: Scrolls the combined title and artist block using global `width`.
+- `[scroll:25]{title} - {artist}[/scroll] | {album}`: Scrolls the combined block within 25 characters, leaving album fixed.
+- `[scroll:25:bounce]{title} - {artist}[/scroll]`: Scrolls the combined block within 25 characters using `bounce` animation.
 
 ### 3. Whole-String Scrolling (Default Fallback)
 - If no inline modifiers are present (e.g. `format = "{player_icon} {status_icon} {title} - {artist}"`), the entire formatted output scrolls up to `width` characters.
