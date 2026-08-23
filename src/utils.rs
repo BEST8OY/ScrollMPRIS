@@ -52,11 +52,7 @@ pub fn get_player_icon(
 }
 
 /// Retrieve the playback state icon glyph.
-pub fn get_status_icon(
-    player_state: &PlayerState,
-    status_icons: &StatusIcons,
-    switch_icons: bool,
-) -> String {
+pub fn get_status_icon(player_state: &PlayerState, status_icons: &StatusIcons) -> String {
     let is_stopped =
         !player_state.playing && player_state.title.is_empty() && player_state.artist.is_empty();
     if is_stopped {
@@ -64,12 +60,6 @@ pub fn get_status_icon(
     }
 
     if player_state.playing {
-        if switch_icons {
-            status_icons.paused.clone()
-        } else {
-            status_icons.playing.clone()
-        }
-    } else if switch_icons {
         status_icons.playing.clone()
     } else {
         status_icons.paused.clone()
@@ -89,12 +79,11 @@ pub fn get_field_value(field: &str, player_state: &PlayerState, config: &Config)
         "status" => player_state.status.clone(),
         "player_icon" | "app_icon" => get_player_icon(player_state, &config.icon_format),
         "status_icon" | "play_icon" | "state_icon" => {
-            get_status_icon(player_state, &config.status_icons, config.switch_icons)
+            get_status_icon(player_state, &config.status_icons)
         }
         "icon" => {
             let player_icon = get_player_icon(player_state, &config.icon_format);
-            let status_icon =
-                get_status_icon(player_state, &config.status_icons, config.switch_icons);
+            let status_icon = get_status_icon(player_state, &config.status_icons);
             if !player_icon.is_empty() && !status_icon.is_empty() {
                 format!("{player_icon} {status_icon}")
             } else {
@@ -470,29 +459,6 @@ mod tests {
             get_field_value("icon", &state, &config),
             " "
         );
-    }
-
-    #[test]
-    fn test_switch_icons_inverts_glyphs() {
-        let config = Config {
-            switch_icons: true,
-            ..Default::default()
-        };
-
-        let mut state = PlayerState {
-            title: "Song".to_string(),
-            artist: "Artist".to_string(),
-            playing: true,
-            ..PlayerState::default()
-        };
-        state.set_service("org.mpris.MediaPlayer2.spotify");
-
-        // When playing with switch_icons=true, status_icon should be  (Pause glyph to click-to-pause)
-        assert_eq!(get_field_value("status_icon", &state, &config), "");
-
-        // When paused with switch_icons=true, status_icon should be  (Play glyph to click-to-play)
-        state.playing = false;
-        assert_eq!(get_field_value("status_icon", &state, &config), "");
     }
 
     #[test]

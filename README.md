@@ -88,7 +88,6 @@ freeze_on_pause = true                  # Pause ticker when playback is paused
 
 # Icon settings
 [icons]
-switch_icons = false                    # Invert play/pause glyphs (action button mode)
 
 # Status glyphs for playback states
 [icons.status]
@@ -225,7 +224,6 @@ All CLI options can be used as one-off overrides or standalone:
 | `--format <string>` | Output format template | `--format '{player_icon} {title:20} - {artist}'` |
 | `--tooltip-format <string>` | Tooltip metadata format (resolves all fields un-scrolled) | `--tooltip-format '{title} - {artist} \| {album}'` |
 | `--icon-format <string>` | Icon format mapping as JSON. `"404"` defines fallback icon | `--icon-format '{"404": "", "spotify": ""}'` |
-| `--switch-icons` | Swap play/pause icons (playing: , paused: ) | `--switch-icons` |
 | `--freeze` | Pause scrolling and reset text when playback is paused | `--freeze` |
 
 ---

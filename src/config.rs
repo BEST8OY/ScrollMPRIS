@@ -79,7 +79,6 @@ pub struct StatusIconsSection {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct IconsSection {
-    pub switch_icons: Option<bool>,
     pub status: Option<StatusIconsSection>,
     pub players: Option<HashMap<String, String>>,
     #[serde(flatten)]
@@ -99,7 +98,6 @@ pub struct ConfigFile {
     pub tooltip_format: Option<String>,
     pub freeze: Option<bool>,
     pub freeze_on_pause: Option<bool>,
-    pub switch_icons: Option<bool>,
     pub icons: Option<IconsSection>,
 }
 
@@ -153,10 +151,6 @@ pub struct CliArgs {
     #[arg(long = "icon-format")]
     pub icon_format_json: Option<String>,
 
-    /// Switch play/pause icon in output
-    #[arg(long = "switch-icons", action = clap::ArgAction::SetTrue)]
-    pub switch_icons: bool,
-
     /// Freeze scrolling and reset text when paused
     #[arg(long = "freeze", action = clap::ArgAction::SetTrue)]
     pub freeze_on_pause: bool,
@@ -179,8 +173,6 @@ pub struct Config {
     pub tooltip_format: String,
     /// Status glyphs for playback states
     pub status_icons: StatusIcons,
-    /// Switch play/pause icon in output
-    pub switch_icons: bool,
     /// Freeze scrolling and reset text when paused
     pub freeze_on_pause: bool,
     /// Delay in milliseconds (computed from speed)
@@ -199,7 +191,6 @@ impl Default for Config {
             format: "{player_icon} {status_icon} {title} - {artist}".to_string(),
             tooltip_format: "{player_icon} {status_icon} {title} - {artist} | {album}".to_string(),
             status_icons: StatusIcons::default(),
-            switch_icons: false,
             freeze_on_pause: false,
             delay: 1000,
             icon_format: default_icon_map(),
@@ -280,8 +271,6 @@ freeze_on_pause = false
 # Icons & Status Indicator
 # -----------------------------------------------------------------------------
 [icons]
-# Invert play/pause icons (action button mode: playing: , paused: ).
-switch_icons = false
 
 # Status glyphs for playback states
 [icons.status]
@@ -328,14 +317,8 @@ impl Config {
         if let Some(fr) = file.freeze.or(file.freeze_on_pause) {
             self.freeze_on_pause = fr;
         }
-        if let Some(si) = file.switch_icons {
-            self.switch_icons = si;
-        }
 
         if let Some(icons_sec) = file.icons {
-            if let Some(si) = icons_sec.switch_icons {
-                self.switch_icons = si;
-            }
             if let Some(status) = icons_sec.status {
                 if let Some(p) = status.playing {
                     self.status_icons.playing = p;
@@ -382,9 +365,6 @@ impl Config {
         }
         if cli.freeze_on_pause {
             self.freeze_on_pause = true;
-        }
-        if cli.switch_icons {
-            self.switch_icons = true;
         }
         if let Some(json) = cli.icon_format_json {
             if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json) {
@@ -475,7 +455,6 @@ mod tests {
         assert_eq!(config.status_icons.paused, "");
         assert_eq!(config.status_icons.stopped, "");
         assert!(!config.freeze_on_pause);
-        assert!(!config.switch_icons);
         assert_eq!(config.icon_format.get("spotify").unwrap(), "");
     }
 
@@ -489,9 +468,6 @@ mod tests {
             tooltip_format = "{title} - {artist}"
             blocked = ["firefox", "chromium"]
             freeze_on_pause = true
-
-            [icons]
-            switch_icons = false
 
             [icons.status]
             playing = "▶"
@@ -523,7 +499,6 @@ mod tests {
         assert_eq!(config.tooltip_format, "{title} - {artist}");
         assert_eq!(config.blocked, vec!["firefox", "chromium"]);
         assert!(config.freeze_on_pause);
-        assert!(!config.switch_icons);
         assert_eq!(config.status_icons.playing, "▶");
         assert_eq!(config.status_icons.paused, "⏸");
         assert_eq!(config.status_icons.stopped, "⏹");
