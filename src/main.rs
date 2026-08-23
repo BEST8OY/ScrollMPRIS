@@ -6,14 +6,13 @@ use anyhow::Result;
 use ScrollMPRIS::config::Config;
 use ScrollMPRIS::mpris::events::MprisEventHandler;
 use ScrollMPRIS::player::PlayerState;
-use ScrollMPRIS::scroll::ScrollState;
-use ScrollMPRIS::utils::print_status;
+use ScrollMPRIS::utils::{ScrollStateMap, print_status};
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
-    let mut scroll_state = ScrollState::new();
+    let mut scroll_states = ScrollStateMap::new();
     let mut last_output = String::new();
     let player_state = Arc::new(Mutex::new(PlayerState::default()));
     let (tx, mut rx) = mpsc::channel(16);
@@ -80,7 +79,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Unified Actor Loop: single owner of stdout, scroll_state, and last_output
+    // Unified Actor Loop: single owner of stdout, scroll_states, and last_output
     let mut ticker = tokio::time::interval(Duration::from_millis(config.delay));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -90,7 +89,7 @@ async fn main() -> Result<()> {
         print_status(
             &config,
             &mut state,
-            &mut scroll_state,
+            &mut scroll_states,
             &mut last_output,
             false,
         );
@@ -103,7 +102,7 @@ async fn main() -> Result<()> {
                 print_status(
                     &config,
                     &mut state,
-                    &mut scroll_state,
+                    &mut scroll_states,
                     &mut last_output,
                     false,
                 );
@@ -114,7 +113,7 @@ async fn main() -> Result<()> {
                     print_status(
                         &config,
                         &mut state,
-                        &mut scroll_state,
+                        &mut scroll_states,
                         &mut last_output,
                         true,
                     );

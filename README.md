@@ -13,7 +13,8 @@ A fast, async, scrolling MPRIS module for [Waybar](https://github.com/Alexays/Wa
 - **Real-Time Lifecycle Tracking**: Instant UI reaction to player launch, exit, and handoff via D-Bus `NameOwnerChanged` signals.
 - **Multi-Artist & Album Support**: Preserves and formats all collaborating/featured artists and album fields (`xesam:artist` joined with commas).
 - **Rate-Adjusted Position Estimation**: Dynamic position tracking accurately scaled by player playback rate.
-- **Configurable Scrolling**: Continuous `wrapping` loop or start/end `reset` mode with configurable speed and width.
+- **Configurable Scrolling**: Industry-standard scrolling modes (`marquee`, `restart`, `bounce`) with configurable speed, width, and pauses.
+- **Field-Aware Scrolling**: Scroll individual fields independently (e.g. `{title:20} - {artist}`) or target specific fields via `--scroll-targets`.
 - **Rich Status & Formatting**: Custom format strings, tooltips, player icons, play/pause state icons, and position/remaining time display.
 
 ---
@@ -66,11 +67,16 @@ Add ScrollMPRIS as a custom module in your Waybar configuration (`~/.config/wayb
 ```json
 "custom/ScrollMPRIS": {
     "return-type": "json",
-    "exec": "ScrollMPRIS",
+    "exec": "ScrollMPRIS --format '{title:20:marquee} | {artist:12:bounce}' -b firefox,chromium --freeze",
     "escape": true,
-    "on-click": "playerctl play-pause"
+    "on-click": "playerctl play-pause",
+    "on-scroll-up": "playerctl next",
+    "on-scroll-down": "playerctl previous"
 }
 ```
+
+> [!TIP]
+> Always wrap `--format` strings containing `|` or `{...}` in single quotes (`'...'`) to prevent the shell from interpreting `|` as a pipeline.
 
 ### Styling with CSS
 
@@ -78,34 +84,76 @@ Customize the appearance in your Waybar stylesheet (`~/.config/waybar/style.css`
 
 ```css
 #custom-ScrollMPRIS {
-    /* Default / general style */
+    padding: 0 10px;
+    color: #cdd6f4;
+    background: #1e1e2e;
+    border-radius: 8px;
 }
 
 #custom-ScrollMPRIS.playing {
-    /* Style when playback is active */
+    color: #a6e3a1;
 }
 
 #custom-ScrollMPRIS.paused {
-    /* Style when playback is paused */
+    color: #f9e2af;
 }
 
 #custom-ScrollMPRIS.stopped {
-    /* Style when no player is active */
+    color: #6c7086;
 }
 
-/* Player-specific styles */
+/* Player-specific styling */
 #custom-ScrollMPRIS.spotify {
-    /* Style specifically for Spotify */
+    color: #1db954;
 }
 
 #custom-ScrollMPRIS.firefox {
-    /* Style specifically for Firefox */
+    color: #ff7139;
 }
 
 #custom-ScrollMPRIS.playing.spotify {
-    /* Style when Spotify is actively playing */
+    border-bottom: 2px solid #1db954;
 }
 ```
+
+---
+
+## Scrolling Modes
+
+ScrollMPRIS supports three industry-standard scrolling behaviors:
+
+| Mode | Description |
+| :--- | :--- |
+| **`marquee`** *(default)* | Continuous seamless circular ticker loop with separator spacing. |
+| **`restart`** | Scrolls from left to right, holds at the end, and restarts back at the beginning. |
+| **`bounce`** | Scrolls to the end, holds, reverses direction back to start, holds, and repeats. |
+
+---
+
+## Field-Aware Scrolling
+
+Scroll individual metadata fields independently while keeping other text static:
+
+1. **Inline Field Width & Mode**:
+   - `{title:20}`: Only `{title}` scrolls within 20 characters; `{artist}` remains static.
+   - `{title:20:bounce}`: Only `{title}` scrolls at width 20 using `bounce` mode.
+   - `{title:15:marquee} | {artist:10:bounce}`: `{title}` and `{artist}` scroll independently with their own widths and modes!
+2. **Scroll Tag Blocks**:
+   - `[scroll:25]{title} - {artist}[/scroll] | {album}`: Scrolls the combined title and artist within 25 characters, leaving album static.
+3. **CLI Targets Flag**:
+   - `--scroll-targets title`: With `--format "{title} - {artist}" -w 20`, only `{title}` scrolls up to 20 characters.
+
+### Supported Format Tokens
+
+| Token | Description |
+| :--- | :--- |
+| `{title}` | Track title |
+| `{artist}` | Track artist(s) |
+| `{album}` | Album name |
+| `{player}` | Player name (e.g. `spotify`, `firefox`, `vlc`) |
+| `{status}` | Playback status (e.g. `Playing`, `Paused`, `Stopped`) |
+| `{position}` | Track elapsed or formatted position (e.g. `01:23`) |
+| `{length}` | Track duration (e.g. `03:45`) |
 
 ---
 
@@ -114,36 +162,71 @@ Customize the appearance in your Waybar stylesheet (`~/.config/waybar/style.css`
 | Option | Description | Example |
 | :--- | :--- | :--- |
 | `-s`, `--speed <0-100>` | Scroll speed (0: slow=1000ms, 100: fast=100ms) | `-s 50` |
-| `-w`, `--width <number>` | Maximum width for the scrolling text | `-w 40` |
+| `-w`, `--width <number>` | Maximum width for scrolling text | `-w 40` |
 | `-b`, `--blocked <list>` | Block certain players (comma-separated, case-insensitive) | `-b edge,firefox,mpv` |
 | `-p`, `--position` | Enable position display (shows track time info) | `-p` |
-| `--scroll <mode>` | Scrolling behavior: `wrapping` (loop) or `reset` (restart after finish) | `--scroll wrapping` |
+| `--scroll <mode>` | Scrolling behavior: `marquee`, `restart`, or `bounce` | `--scroll marquee` |
+| `--scroll-targets <fields>` | Metadata fields to scroll (e.g. `title` or `title,artist`) | `--scroll-targets title` |
 | `--position-mode <mode>` | Position style: `increasing` (elapsed) or `remaining` (time left) | `--position-mode remaining` |
-| `--format <string>` | Metadata format (supports `{title}`, `{artist}`, `{album}`) | `--format '{title} - {artist}'` |
-| `--tooltip-format <string>` | Tooltip metadata format (supports `{title}`, `{artist}`, `{album}`) | `--tooltip-format '{title} - {artist} \| {album}'` |
-| `--icon-format <string>` | Icon format mapping as JSON. `"404"` defines the fallback icon | `--icon-format '{"404": "", "vlc": "󰕼", "mpv": "", "spotify": ""}'` |
+| `--format <string>` | Metadata format (supports tokens, `{title:20}`, `[scroll:...]`) | `--format '{title:20} - {artist}'` |
+| `--tooltip-format <string>` | Tooltip metadata format (resolves all fields un-scrolled) | `--tooltip-format '{title} - {artist} \| {album}'` |
+| `--icon-format <string>` | Icon format mapping as JSON. `"404"` defines fallback icon | `--icon-format '{"404": "", "vlc": "󰕼", "mpv": "", "spotify": ""}'` |
 | `--no-icon` | Disable all icons in output | `--no-icon` |
 | `--no-status-icon` | Disable only the play/pause status icon | `--no-status-icon` |
 | `--switch-icons` | Swap play/pause icons (playing: , paused: ) | `--switch-icons` |
 | `--freeze` | Pause scrolling and reset text when playback is paused | `--freeze` |
 
-**Example Command:**
+---
 
+## Configuration Recipes & Examples
+
+### 1. Title-Only Scrolling with Static Artist
+Only long titles scroll within 20 characters, while the artist and separator remain fixed:
 ```bash
-ScrollMPRIS -s 50 -w 40 -b edge,firefox --scroll wrapping --position --position-mode remaining --format '{title} - {artist}'
+ScrollMPRIS -s 50 --format '{title:20} - {artist}'
+```
+
+### 2. Independent Dual-Field Scrolling with Different Modes
+Title scrolls in continuous `marquee` (15 chars) while artist scrolls in `bounce` (10 chars):
+```bash
+ScrollMPRIS -s 50 --format '{title:15:marquee} | {artist:10:bounce}'
+```
+
+### 3. Blocked Players & Pause Freeze
+Ignore browser audio (e.g., Firefox, Edge), freeze scrolling when music is paused, and block unwanted apps:
+```bash
+ScrollMPRIS -s 40 -w 35 -b firefox,edge,chromium --freeze
+```
+
+### 4. Custom Position & Duration Inside Format String
+Embed track time directly anywhere in the format template:
+```bash
+ScrollMPRIS -s 50 --format '{title:20:marquee} - {artist} [{position}/{length}]'
+```
+
+### 5. Custom Tooltip Format
+Display full track title, artist, album, and player name on hover:
+```bash
+ScrollMPRIS --format '{title:20} - {artist}' --tooltip-format '{title} by {artist} on {album} ({player})'
+```
+
+### 6. Minimalist (No Icons, Remaining Time)
+Clean text-only output showing remaining time:
+```bash
+ScrollMPRIS --no-icon -p --position-mode remaining --format '{title:25} - {artist}'
 ```
 
 ---
 
 ## Preview
 
-**Reset mode:**
+**Restart mode:**
 
-![Reset mode](https://github.com/user-attachments/assets/5a151c83-394d-4f12-9660-6f248de1a71d)
+![Restart mode](https://github.com/user-attachments/assets/5a151c83-394d-4f12-9660-6f248de1a71d)
 
-**Wrapped mode:**
+**Marquee mode:**
 
-![Wrapped mode](https://github.com/user-attachments/assets/c72cc4be-3385-4a53-8848-7c292e12e400)
+![Marquee mode](https://github.com/user-attachments/assets/c72cc4be-3385-4a53-8848-7c292e12e400)
 
 ---
 

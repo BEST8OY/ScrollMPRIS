@@ -30,10 +30,20 @@ pub struct Config {
         default_value = ""
     )]
     pub blocked: Vec<String>,
-    /// Scrolling behavior: "wrapping" or "reset"
-    #[arg(long = "scroll", value_enum, default_value_t = ScrollMode::Wrapping)]
+    /// Scrolling behavior: "marquee", "restart", or "bounce"
+    #[arg(long = "scroll", value_enum, default_value_t = ScrollMode::Marquee)]
     pub scroll_mode: ScrollMode,
-    /// Metadata format string
+    /// Metadata fields to scroll (comma-separated, e.g. "title" or "title,artist").
+    /// If omitted and format contains no field directives, the full formatted string scrolls.
+    #[arg(
+        long = "scroll-targets",
+        alias = "scroll-field",
+        alias = "scroll-fields",
+        value_delimiter = ',',
+        default_value = ""
+    )]
+    pub scroll_targets: Vec<String>,
+    /// Metadata format string (supports {title}, {artist}, {album}, {player}, {status}, {position}, {length}, or field modifiers like {title:20}, {title:20:bounce}, [scroll:20]{title}[/scroll])
     #[arg(long = "format", default_value = "{title} - {artist}")]
     pub format: String,
     /// Metadata format string for tooltip
@@ -82,6 +92,12 @@ impl Default for Config {
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
             .collect();
+        config.scroll_targets = config
+            .scroll_targets
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
         config.icon_format = serde_json::from_str(&config.icon_format_json).unwrap();
         config
     }
@@ -98,6 +114,12 @@ impl Config {
         // Normalize blocked list
         config.blocked = config
             .blocked
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+        config.scroll_targets = config
+            .scroll_targets
             .iter()
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
