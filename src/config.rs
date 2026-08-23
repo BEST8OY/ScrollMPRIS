@@ -6,6 +6,25 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::scroll::ScrollMode;
 
+/// Status glyphs for playback states.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct StatusIcons {
+    pub playing: String,
+    pub paused: String,
+    pub stopped: String,
+}
+
+impl Default for StatusIcons {
+    fn default() -> Self {
+        Self {
+            playing: "".to_string(),
+            paused: "".to_string(),
+            stopped: String::new(),
+        }
+    }
+}
+
 /// Helper function to provide default icon mappings.
 pub fn default_icon_map() -> HashMap<String, String> {
     let mut map = HashMap::new();
@@ -47,11 +66,21 @@ where
     }
 }
 
+/// Status glyphs section inside `config.toml`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct StatusIconsSection {
+    pub playing: Option<String>,
+    pub paused: Option<String>,
+    pub stopped: Option<String>,
+}
+
 /// Icons section inside `config.toml`.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct IconsSection {
     pub switch_icons: Option<bool>,
+    pub status: Option<StatusIconsSection>,
     pub players: Option<HashMap<String, String>>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -148,6 +177,8 @@ pub struct Config {
     pub format: String,
     /// Metadata format string for tooltip
     pub tooltip_format: String,
+    /// Status glyphs for playback states
+    pub status_icons: StatusIcons,
     /// Switch play/pause icon in output
     pub switch_icons: bool,
     /// Freeze scrolling and reset text when paused
@@ -167,6 +198,7 @@ impl Default for Config {
             scroll_mode: ScrollMode::Marquee,
             format: "{player_icon} {status_icon} {title} - {artist}".to_string(),
             tooltip_format: "{player_icon} {status_icon} {title} - {artist} | {album}".to_string(),
+            status_icons: StatusIcons::default(),
             switch_icons: false,
             freeze_on_pause: false,
             delay: 1000,
@@ -248,8 +280,14 @@ freeze_on_pause = false
 # Icons & Status Indicator
 # -----------------------------------------------------------------------------
 [icons]
-# Invert play/pause icons (playing: , paused:  instead of playing: , paused: ).
+# Invert play/pause icons (action button mode: playing: , paused: ).
 switch_icons = false
+
+# Status glyphs for playback states
+[icons.status]
+playing = ""
+paused = ""
+stopped = ""
 
 # Custom icons per player service name.
 # "404" defines the fallback icon for unmatched players.
@@ -297,6 +335,17 @@ impl Config {
         if let Some(icons_sec) = file.icons {
             if let Some(si) = icons_sec.switch_icons {
                 self.switch_icons = si;
+            }
+            if let Some(status) = icons_sec.status {
+                if let Some(p) = status.playing {
+                    self.status_icons.playing = p;
+                }
+                if let Some(p) = status.paused {
+                    self.status_icons.paused = p;
+                }
+                if let Some(s) = status.stopped {
+                    self.status_icons.stopped = s;
+                }
             }
             if let Some(players) = icons_sec.players {
                 for (k, v) in players {
@@ -422,13 +471,16 @@ mod tests {
             config.tooltip_format,
             "{player_icon} {status_icon} {title} - {artist} | {album}"
         );
+        assert_eq!(config.status_icons.playing, "");
+        assert_eq!(config.status_icons.paused, "");
+        assert_eq!(config.status_icons.stopped, "");
         assert!(!config.freeze_on_pause);
         assert!(!config.switch_icons);
         assert_eq!(config.icon_format.get("spotify").unwrap(), "");
     }
 
     #[test]
-    fn test_parse_toml_config() {
+    fn test_parse_toml_config_with_custom_status_icons() {
         let toml_str = r#"
             speed = 50
             width = 25
@@ -439,7 +491,12 @@ mod tests {
             freeze_on_pause = true
 
             [icons]
-            switch_icons = true
+            switch_icons = false
+
+            [icons.status]
+            playing = "▶"
+            paused = "⏸"
+            stopped = "⏹"
 
             [icons.players]
             foobar = "󰎆"
@@ -466,7 +523,10 @@ mod tests {
         assert_eq!(config.tooltip_format, "{title} - {artist}");
         assert_eq!(config.blocked, vec!["firefox", "chromium"]);
         assert!(config.freeze_on_pause);
-        assert!(config.switch_icons);
+        assert!(!config.switch_icons);
+        assert_eq!(config.status_icons.playing, "▶");
+        assert_eq!(config.status_icons.paused, "⏸");
+        assert_eq!(config.status_icons.stopped, "⏹");
         assert_eq!(config.icon_format.get("foobar").unwrap(), "󰎆");
         assert_eq!(config.icon_format.get("404").unwrap(), "");
         assert_eq!(config.icon_format.get("spotify").unwrap(), "");

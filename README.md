@@ -88,7 +88,13 @@ freeze_on_pause = true                  # Pause ticker when playback is paused
 
 # Icon settings
 [icons]
-switch_icons = false                    # Invert play/pause glyphs
+switch_icons = false                    # Invert play/pause glyphs (action button mode)
+
+# Status glyphs for playback states
+[icons.status]
+playing = ""
+paused = ""
+stopped = ""
 
 # Player-specific icons (replaces 404 for unmatched players)
 [icons.players]
