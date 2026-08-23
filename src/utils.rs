@@ -252,7 +252,7 @@ pub fn render_scrolled_format(
         }
     });
 
-    rendered.trim().to_string()
+    rendered.into_owned()
 }
 
 fn get_position_text(config: &Config, player_state: &PlayerState) -> String {
@@ -587,6 +587,34 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Song \"With Quotes\""));
+    }
+
+    #[test]
+    fn test_constant_rendered_length_during_marquee_scroll() {
+        let mut config = Config::default();
+        config.format = "{title:15:marquee} | {artist}".to_string();
+        config.scroll_mode = ScrollMode::Marquee;
+
+        let player_state = PlayerState {
+            title: "Super Long Song Title That Exceeds Width".to_string(),
+            artist: "Fixed Artist".to_string(),
+            playing: true,
+            ..PlayerState::default()
+        };
+
+        let mut scroll_states = ScrollStateMap::new();
+        let expected_len = 15 + " | Fixed Artist".chars().count();
+
+        // Run through multiple full scroll cycles and ensure every single frame has exact constant character count
+        for _ in 0..50 {
+            let frame = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
+            assert_eq!(
+                frame.chars().count(),
+                expected_len,
+                "Frame length fluctuates: {:?}",
+                frame
+            );
+        }
     }
 }
 
