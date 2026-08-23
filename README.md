@@ -40,6 +40,9 @@ A fast, async, pure Rust scrolling MPRIS module for [Waybar](https://github.com/
 }
 ```
 
+> [!TIP]
+> Both `ScrollMPRIS` and `scrollmpris` can be used interchangeably in your configuration or terminal.
+
 ### 2. Add to Waybar Module Bar
 
 Include `"custom/ScrollMPRIS"` in your `modules-left`, `modules-center`, or `modules-right`.
@@ -130,6 +133,12 @@ Scroll individual metadata fields independently while keeping other elements sta
 
 ### 3. Whole-String Scrolling (Default Fallback)
 - If no inline modifiers are present (e.g. `format = "{player_icon} {status_icon} {title} - {artist}"`), the entire formatted output scrolls up to `width` characters.
+
+> [!NOTE]
+> **Width Priority & Behavior:**
+> - **Override Priority**: Token-specific widths (such as `{title:20}`) always **override** the global `width` setting for that field.
+> - **Combined Module Width**: With multiple independent tokens (e.g. `{title:20} - {artist:20}`), the total rendered length will be the sum of the active field widths plus separators ($\approx 43$ characters).
+> - **Smart Threshold**: If a song title/artist is shorter than its limit (e.g. 10 chars vs `{title:20}`), it displays statically without wasting space or adding extra padding.
 
 ---
 
@@ -258,6 +267,7 @@ git clone https://github.com/BEST8OY/ScrollMPRIS.git
 cd ScrollMPRIS
 cargo build --release
 install -Dt /usr/local/bin target/release/ScrollMPRIS
+ln -sf /usr/local/bin/ScrollMPRIS /usr/local/bin/scrollmpris
 ```
 
 ---
