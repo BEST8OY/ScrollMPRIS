@@ -1,40 +1,59 @@
 # Maintainer: Penguin <penguin@dawn.org.in>
 
 pkgname=scrollmpris-git
-pkgver=1.0.0_r24.3e79f70
+pkgver=2.0.0.r45.gd0579e6
 pkgrel=1
 pkgdesc="Scrolling MPRIS module for waybar"
-arch=('x86_64')
+arch=('x86_64' 'aarch64' 'armv7h' 'riscv64')
 url="https://github.com/BEST8OY/ScrollMPRIS"
-license=('Unlicense')
+license=('GPL-3.0-or-later')
 depends=(
-  'dbus'
   'glibc'
   'gcc-libs'
 )
 makedepends=(
-	'rust'
-	'git'
+  'cargo'
+  'git'
 )
-optdepends=('waybar: for integration with Waybar')
-conflicts=("${pkgname}")
-provides=("${pkgname}")
-source=("${pkgname}::git+https://github.com/BEST8OY/ScrollMPRIS")
+optdepends=(
+  'waybar: for integration with Waybar'
+  'playerctl: for playback control via waybar module clicks'
+)
+provides=("${pkgname%-git}=${pkgver}")
+conflicts=("${pkgname%-git}")
+source=("${pkgname}::git+https://github.com/BEST8OY/ScrollMPRIS.git")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd ${pkgname}
+  cd "$pkgname"
   cargo_version=$(grep '^version' Cargo.toml | head -n1 | cut -d'"' -f2)
-  printf "${cargo_version}_r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  printf "%s.r%s.g%s" "$cargo_version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-  cd ${pkgname}
-  cargo fetch
-  cargo build --frozen --release
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release --all-targets
+}
+
+check() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --all-targets
 }
 
 package() {
-  cd ${pkgname}
-  install -Dt "$pkgdir"/usr/bin ${CARGO_TARGET_DIR:-target}/release/ScrollMPRIS
+  cd "$pkgname"
+  install -Dm755 "target/release/ScrollMPRIS" "$pkgdir/usr/bin/ScrollMPRIS"
+  ln -sf ScrollMPRIS "$pkgdir/usr/bin/scrollmpris"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

@@ -4,7 +4,7 @@
 [![D-Bus](https://img.shields.io/badge/D--Bus-zbus_5-blue.svg?logo=linux)](https://crates.io/crates/zbus)
 [![Async Runtime](https://img.shields.io/badge/Async-Tokio-black.svg?logo=tokio)](https://tokio.rs/)
 [![AUR version](https://img.shields.io/aur/version/scrollmpris-git.svg)](https://aur.archlinux.org/packages/scrollmpris-git)
-[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 
 A fast, async, pure Rust scrolling MPRIS module for [Waybar](https://github.com/Alexays/Waybar) powered by `zbus 5` and `tokio`.
 
@@ -276,4 +276,4 @@ install -Dt /usr/local/bin target/release/ScrollMPRIS
 
 ## 📄 License
 
-This project is dedicated to the public domain under the [Unlicense](LICENSE).
+This project is licensed under the [GNU General Public License v3.0 or later](LICENSE).

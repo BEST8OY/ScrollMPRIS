@@ -2,6 +2,9 @@
 name = "ScrollMPRIS"
 version = "2.0.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A fast, async, pure Rust scrolling MPRIS module for Waybar"
+repository = "https://github.com/BEST8OY/ScrollMPRIS"
 
 [dependencies]
 zbus = { version = "5", default-features = false, features = ["tokio"] }
