@@ -95,6 +95,7 @@ pub struct ConfigFile {
     pub blocked: Option<Vec<String>>,
     pub scroll_mode: Option<ScrollMode>,
     pub format: Option<String>,
+    pub format_stopped: Option<String>,
     pub tooltip_format: Option<String>,
     pub freeze: Option<bool>,
     pub freeze_on_pause: Option<bool>,
@@ -143,6 +144,10 @@ pub struct CliArgs {
     #[arg(long = "format")]
     pub format: Option<String>,
 
+    /// Output format when playback is stopped (default is "" to auto-hide)
+    #[arg(long = "format-stopped")]
+    pub format_stopped: Option<String>,
+
     /// Metadata format string for tooltip
     #[arg(long = "tooltip-format")]
     pub tooltip_format: Option<String>,
@@ -169,6 +174,8 @@ pub struct Config {
     pub scroll_mode: ScrollMode,
     /// Metadata format string
     pub format: String,
+    /// Output format string when stopped (empty by default to auto-hide)
+    pub format_stopped: String,
     /// Metadata format string for tooltip
     pub tooltip_format: String,
     /// Status glyphs for playback states
@@ -189,6 +196,7 @@ impl Default for Config {
             blocked: Vec::new(),
             scroll_mode: ScrollMode::Marquee,
             format: "{player_icon} {status_icon} {title} - {artist}".to_string(),
+            format_stopped: String::new(),
             tooltip_format: "{player_icon} {status_icon} {title} - {artist} | {album}".to_string(),
             status_icons: StatusIcons::default(),
             freeze_on_pause: false,
@@ -250,13 +258,17 @@ width = 40
 # Default scrolling behavior: "marquee" (continuous loop), "restart" (loop from start), or "bounce" (back and forth).
 scroll_mode = "marquee"
 
-# Output format string for Waybar.
+# Output format string for Waybar when playing or paused.
 # Available tokens:
 #   Metadata:  {title}, {artist}, {album}, {player}, {status}
 #   Icons:     {player_icon}, {status_icon}, {icon}
 #   Timers:    {position} (or {elapsed}), {remaining}, {length} (or {duration})
 # Supports inline modifiers like {title:20}, {title:20:bounce}, and [scroll:20]{title}[/scroll].
 format = "{player_icon} {status_icon} {title} - {artist}"
+
+# Output format string when playback is stopped.
+# Leave empty ("") to auto-hide the Waybar module when no media is active.
+format_stopped = ""
 
 # Tooltip format string displayed on hover in Waybar.
 tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
@@ -310,6 +322,9 @@ impl Config {
         if let Some(f) = file.format {
             self.format = f;
         }
+        if let Some(fs) = file.format_stopped {
+            self.format_stopped = fs;
+        }
         if let Some(tf) = file.tooltip_format {
             self.tooltip_format = tf;
         }
@@ -358,6 +373,9 @@ impl Config {
         }
         if let Some(f) = cli.format {
             self.format = f;
+        }
+        if let Some(fs) = cli.format_stopped {
+            self.format_stopped = fs;
         }
         if let Some(tf) = cli.tooltip_format {
             self.tooltip_format = tf;
@@ -446,6 +464,7 @@ mod tests {
             config.format,
             "{player_icon} {status_icon} {title} - {artist}"
         );
+        assert_eq!(config.format_stopped, "");
         assert_eq!(
             config.tooltip_format,
             "{player_icon} {status_icon} {title} - {artist} | {album}"
@@ -464,6 +483,7 @@ mod tests {
             width = 25
             scroll_mode = "bounce"
             format = "{player_icon} {title:15} | {artist} [{position}] {status_icon}"
+            format_stopped = "{status_icon} No Media"
             tooltip_format = "{title} - {artist}"
             blocked = ["firefox", "chromium"]
             freeze_on_pause = true
@@ -495,6 +515,7 @@ mod tests {
             config.format,
             "{player_icon} {title:15} | {artist} [{position}] {status_icon}"
         );
+        assert_eq!(config.format_stopped, "{status_icon} No Media");
         assert_eq!(config.tooltip_format, "{title} - {artist}");
         assert_eq!(config.blocked, vec!["firefox", "chromium"]);
         assert!(config.freeze_on_pause);
@@ -530,6 +551,7 @@ mod tests {
             width = 20
             scroll_mode = "restart"
             format = "{title}"
+            format_stopped = "Idle"
         "#;
 
         let file_cfg: ConfigFile = toml::from_str(toml_str).unwrap();
@@ -540,6 +562,7 @@ mod tests {
         let cli = CliArgs {
             speed: Some(80),
             format: Some("{artist} - {title}".to_string()),
+            format_stopped: Some("{status_icon} Offline".to_string()),
             freeze_on_pause: true,
             ..Default::default()
         };
@@ -549,6 +572,7 @@ mod tests {
         assert_eq!(config.width, 20); // From config file
         assert_eq!(config.scroll_mode, ScrollMode::Restart); // From config file
         assert_eq!(config.format, "{artist} - {title}"); // From CLI
+        assert_eq!(config.format_stopped, "{status_icon} Offline"); // From CLI
         assert!(config.freeze_on_pause); // From CLI
     }
 

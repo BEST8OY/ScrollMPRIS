@@ -67,6 +67,7 @@ speed = 50                              # 0 (1000ms delay) to 100 (100ms delay)
 width = 40                              # Default max character width for scrolling text
 scroll_mode = "marquee"                 # Default mode: "marquee", "restart", or "bounce"
 format = "{player_icon} {status_icon} {title:20:marquee} | {artist:12:bounce} [{position}/{length}]"
+format_stopped = ""                     # Output when stopped ("" to auto-hide from Waybar)
 tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
 blocked = ["firefox", "chromium"]       # Ignore audio from specific players
 freeze_on_pause = true                  # Pause ticker and reset to start when paused
@@ -152,7 +153,8 @@ Scroll individual metadata fields independently while keeping other elements sta
 | `-w`, `--width <number>` | Maximum character width for scrolling text | `-w 40` |
 | `-b`, `--blocked <list>` | Block specific players (comma-separated, case-insensitive) | `-b edge,firefox,mpv` |
 | `--scroll <mode>` | Default scrolling behavior: `marquee`, `restart`, or `bounce` | `--scroll marquee` |
-| `--format <string>` | Output format template | `--format '{player_icon} {title:20} - {artist}'` |
+| `--format <string>` | Output format template when playing or paused | `--format '{player_icon} {title:20} - {artist}'` |
+| `--format-stopped <string>` | Output format template when stopped (default: `""` to auto-hide) | `--format-stopped '{status_icon} No Media'` |
 | `--tooltip-format <string>` | Tooltip format (resolves all fields un-scrolled on hover) | `--tooltip-format '{title} - {artist} \| {album}'` |
 | `--icon-format <string>` | Override player brand icons via JSON mapping | `--icon-format '{"404": "", "spotify": ""}'` |
 | `--freeze` | Pause scrolling and reset text to start when paused | `--freeze` |
@@ -189,6 +191,12 @@ ScrollMPRIS --format '{title:20} - {artist} [{position}]'
 ### 6. Dual-Field Independent Scrolling
 ```bash
 ScrollMPRIS -s 50 --format '{player_icon} {title:15:marquee} | {artist:10:bounce} {status_icon}'
+```
+
+### 7. Persistent Placeholder (No Auto-Hide on Stop)
+Keep the Waybar module visible with custom placeholder text even when music stops:
+```bash
+ScrollMPRIS --format '{player_icon} {status_icon} {title:20} - {artist}' --format-stopped '{status_icon} No Media'
 ```
 
 ---

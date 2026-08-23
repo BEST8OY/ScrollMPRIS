@@ -270,15 +270,28 @@ pub fn print_status(
     advance: bool,
 ) {
     let classes = get_css_classes(player_state);
-
-    // If there's no metadata, output a stopped status.
-    if player_state.title.is_empty()
+    let is_empty_metadata = player_state.title.is_empty()
         && player_state.artist.is_empty()
-        && player_state.album.is_empty()
-    {
+        && player_state.album.is_empty();
+    let is_stopped = classes.iter().any(|c| c == "stopped") || is_empty_metadata;
+
+    if is_stopped {
+        let output = if config.format_stopped.is_empty() {
+            String::new()
+        } else {
+            format_tooltip(&config.format_stopped, player_state, config)
+        };
+
+        let tooltip = if output.is_empty() {
+            String::new()
+        } else {
+            format_tooltip(&config.tooltip_format, player_state, config)
+        };
+
         let json_output = serde_json::json!({
-            "text": "",
+            "text": output,
             "class": classes,
+            "tooltip": tooltip,
         })
         .to_string();
 
@@ -308,15 +321,8 @@ pub fn print_status(
         return;
     }
 
-    let is_stopped = classes.iter().any(|c| c == "stopped");
-    let output = if is_stopped {
-        String::new()
-    } else {
-        scrolled_text
-    };
-
     let json_output: String = serde_json::json!({
-        "text": output,
+        "text": scrolled_text,
         "class": classes,
         "tooltip": tooltip
     })
@@ -579,6 +585,29 @@ mod tests {
 
         let frame2 = render_scrolled_format(&config, &player_state, &mut scroll_states, true);
         assert_eq!(frame2, "ong - Arti | MyAlbum");
+    }
+
+    #[test]
+    fn test_stopped_state_output() {
+        let mut config = Config::default();
+        let mut state = PlayerState::default();
+        let mut scroll_states = ScrollStateMap::new();
+        let mut last_output = String::new();
+
+        // 1. Default format_stopped is empty -> outputs empty text (Waybar auto-hides)
+        print_status(&config, &mut state, &mut scroll_states, &mut last_output, false);
+        let parsed: serde_json::Value = serde_json::from_str(&last_output).unwrap();
+        assert_eq!(parsed["text"], "");
+        assert_eq!(parsed["class"], serde_json::json!(["stopped"]));
+
+        // 2. Custom format_stopped -> outputs custom placeholder
+        config.format_stopped = "{status_icon} No Media".to_string();
+        config.status_icons.stopped = "⏹".to_string();
+        last_output.clear();
+        print_status(&config, &mut state, &mut scroll_states, &mut last_output, false);
+        let parsed: serde_json::Value = serde_json::from_str(&last_output).unwrap();
+        assert_eq!(parsed["text"], "⏹ No Media");
+        assert_eq!(parsed["class"], serde_json::json!(["stopped"]));
     }
 
     #[test]
