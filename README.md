@@ -71,9 +71,6 @@ tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
 blocked = ["firefox", "chromium"]       # Ignore audio from specific players
 freeze_on_pause = true                  # Pause ticker and reset to start when paused
 
-# Icon settings
-[icons]
-
 # Status glyphs for playback states
 [icons.status]
 playing = ""

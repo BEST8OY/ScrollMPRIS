@@ -270,7 +270,6 @@ freeze_on_pause = false
 # -----------------------------------------------------------------------------
 # Icons & Status Indicator
 # -----------------------------------------------------------------------------
-[icons]
 
 # Status glyphs for playback states
 [icons.status]
