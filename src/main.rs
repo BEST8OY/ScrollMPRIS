@@ -9,7 +9,7 @@ use ScrollMPRIS::player::PlayerState;
 use ScrollMPRIS::utils::{ScrollStateMap, print_status};
 use tokio::sync::mpsc;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let config = Config::parse();
     let mut scroll_states = ScrollStateMap::new();
