@@ -14,7 +14,7 @@ A fast, async, pure Rust scrolling MPRIS module for [Waybar](https://github.com/
 
 - **Pure Rust Async D-Bus (`zbus 5`)**: Zero C library dependencies (`libdbus-1` not required).
 - **100% Event-Driven (Zero IPC Polling)**: Pure signal-driven architecture with zero background polling loops and complete silence while idle or paused.
-- **Streaming Buffering Calibration**: Intelligent transient calibration state machine automatically compensates for streaming playback latency (e.g. Spotify), locking timers in sync without premature drift.
+- **Adaptive Playback Calibration**: Transient position calibration automatically compensates for streaming buffer delays (e.g., Spotify, browser MPRIS extensions), Bluetooth latency, and seek jitter across all media players—locking into sample-accurate sync within ~1.2s before self-disarming for zero ongoing D-Bus polling overhead.
 - **Dual-Tier Player Discovery**: Prefers `playerctld` for recency-ordered player prioritization, with automatic fallback to standard D-Bus discovery.
 - **Real-Time Lifecycle Tracking**: Instant UI response to player startup, exit, and handoff via D-Bus `NameOwnerChanged` signals.
 - **Multi-Artist & Album Support**: Formats collaborating/featured artists (`xesam:artist` joined with commas) and album metadata.
