@@ -88,8 +88,12 @@ async fn main() -> Result<()> {
     }
 
     // Unified Actor Loop: single owner of stdout, scroll_states, and last_output
-    let mut ticker = tokio::time::interval(Duration::from_millis(config.delay));
+    // Ticker runs at a responsive sub-second rate (clamped to max 100ms) to ensure
+    // accurate timer updates, while scroll steps advance only after config.delay elapsed.
+    let tick_interval_ms = config.delay.min(100);
+    let mut ticker = tokio::time::interval(Duration::from_millis(tick_interval_ms));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_scroll = std::time::Instant::now();
 
     // Emit initial status (e.g. stopped) so Waybar immediately receives state
     {
@@ -118,12 +122,17 @@ async fn main() -> Result<()> {
             _ = ticker.tick() => {
                 let mut state = player_state.lock().unwrap();
                 if state.playing {
+                    let now = std::time::Instant::now();
+                    let should_advance = now.duration_since(last_scroll) >= Duration::from_millis(config.delay);
+                    if should_advance {
+                        last_scroll = now;
+                    }
                     print_status(
                         &config,
                         &mut state,
                         &mut scroll_states,
                         &mut last_output,
-                        true,
+                        should_advance,
                     );
                 }
             }

@@ -94,12 +94,13 @@ pub fn get_field_value(field: &str, player_state: &PlayerState, config: &Config)
         }
         "remaining" | "countdown" => {
             let pos = player_state.estimate_position();
+            let pos_sec = (pos + TIMER_LEAD_COMPENSATION_SECS).floor();
             let remaining = player_state
                 .length
-                .map_or(0.0, |len| (len.floor() - pos.floor()).max(0.0));
-            format_position(remaining)
+                .map_or(0.0, |len| (len.floor() - pos_sec).max(0.0));
+            format_duration(remaining)
         }
-        "length" | "duration" => player_state.length.map(format_position).unwrap_or_default(),
+        "length" | "duration" => player_state.length.map(format_duration).unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -334,8 +335,12 @@ pub fn print_status(
     }
 }
 
-/// Formats time (in seconds) to a mm:ss or hh:mm:ss string.
-pub fn format_position(seconds: f64) -> String {
+/// Empirical lead compensation (in seconds) to account for D-Bus IPC sampling round-trip
+/// and Waybar stdout/GTK rendering pipeline latencies.
+pub const TIMER_LEAD_COMPENSATION_SECS: f64 = 0.080;
+
+/// Formats a raw duration (in seconds) without lead compensation to a mm:ss or hh:mm:ss string.
+pub fn format_duration(seconds: f64) -> String {
     let total_seconds = seconds.floor().max(0.0) as i64;
     if total_seconds >= 3600 {
         let hours = total_seconds / 3600;
@@ -347,6 +352,12 @@ pub fn format_position(seconds: f64) -> String {
         let seconds = total_seconds % 60;
         format!("{:02}:{:02}", minutes, seconds)
     }
+}
+
+/// Formats a player playback position (in seconds) to a mm:ss or hh:mm:ss string,
+/// applying lead compensation to align display updates with player UIs.
+pub fn format_position(seconds: f64) -> String {
+    format_duration(seconds + TIMER_LEAD_COMPENSATION_SECS)
 }
 
 #[cfg(test)]
