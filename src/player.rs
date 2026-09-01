@@ -17,6 +17,7 @@ pub struct PlayerState {
     pub length: Option<f64>,
     pub service: Option<String>,
     pub rate: f64,
+    pub calibrated: bool,
 }
 
 impl Default for PlayerState {
@@ -34,12 +35,13 @@ impl Default for PlayerState {
             length: None,
             service: None,
             rate: 1.0,
+            calibrated: false,
         }
     }
 }
 
 /// Default position drift threshold (in seconds) before applying calibration corrections.
-pub const DEFAULT_CALIBRATION_DRIFT_THRESHOLD: f64 = 0.25;
+pub const DEFAULT_CALIBRATION_DRIFT_THRESHOLD: f64 = 0.10;
 
 impl PlayerState {
     pub fn update_from_metadata(&mut self, meta: &TrackMetadata) {
@@ -51,6 +53,7 @@ impl PlayerState {
         self.err = None;
         self.last_position = 0.0;
         self.last_update = Some(Instant::now());
+        self.calibrated = false;
         // service should be set elsewhere
     }
 
@@ -61,6 +64,7 @@ impl PlayerState {
     pub fn get_service(&self) -> Option<&str> {
         self.service.as_deref()
     }
+
     pub fn update_playback_dbus(&mut self, playback_status: String, position: f64, rate: f64) {
         self.playing = playback_status == "Playing";
         self.status = playback_status;
@@ -68,9 +72,12 @@ impl PlayerState {
         self.last_update = Some(Instant::now());
         self.position = position;
         self.rate = if rate > 0.0 { rate } else { 1.0 };
+        // If playing with non-zero position, audio is already in steady-state playback
+        self.calibrated = self.playing && position > 0.0;
     }
+
     pub fn estimate_position(&self) -> f64 {
-        if self.playing
+        if self.playing && self.calibrated
             && let Some(instant) = self.last_update
         {
             let elapsed = instant.elapsed().as_secs_f64() * self.rate;
@@ -78,21 +85,41 @@ impl PlayerState {
         }
         self.last_position
     }
+
     #[allow(dead_code)]
     pub fn has_changed(&self, meta: &TrackMetadata) -> bool {
         self.title != meta.title || self.artist != meta.artist || self.album != meta.album
     }
+
     pub fn reset_position_cache(&mut self, position: f64) {
         self.last_position = position;
         self.last_update = Some(Instant::now());
         self.position = position;
+        self.calibrated = false;
     }
 
     /// Calibrate estimated position against authoritative player position.
-    /// Updates anchor instant and position only if detected drift exceeds `threshold`.
-    /// Returns true if a correction was applied.
+    /// When uncalibrated (e.g. initial track buffering), holds at anchor until movement is detected.
+    /// When calibrated, applies corrections only if drift exceeds threshold.
+    /// Returns true if state was updated/calibrated.
     pub fn calibrate_position(&mut self, real_position: f64, threshold: f64) -> bool {
         if self.playing {
+            if !self.calibrated {
+                // Check if audio has started advancing from initial start position
+                let delta = (real_position - self.last_position).abs();
+                if delta >= threshold || real_position > 0.05 {
+                    self.calibrated = true;
+                    self.last_position = real_position;
+                    self.last_update = Some(Instant::now());
+                    self.position = real_position;
+                    return true;
+                }
+                // Still buffering at anchor: refresh anchor to prevent drift
+                self.last_position = real_position;
+                self.position = real_position;
+                return false;
+            }
+
             let estimated = self.estimate_position();
             let diff = (estimated - real_position).abs();
             if diff >= threshold {
@@ -114,17 +141,34 @@ mod tests {
     #[test]
     fn test_calibrate_position_detects_drift() {
         let mut state = PlayerState::default();
-        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
-        // Simulate 2 seconds of buffering where local clock advanced to 2.0s
+        state.update_playback_dbus("Playing".to_string(), 10.0, 1.0);
+        // Simulate 2 seconds where local clock advanced to 12.0s
         state.last_update = Some(Instant::now() - Duration::from_secs(2));
 
-        assert!((state.estimate_position() - 2.0).abs() < 0.1);
+        assert!((state.estimate_position() - 12.0).abs() < 0.1);
 
-        // Authoritative position from player is still 0.0s (just finished buffering)
-        let corrected = state.calibrate_position(0.0, 0.25);
+        // Authoritative position from player is 10.0s (drift = 2.0s)
+        let corrected = state.calibrate_position(10.0, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
         assert!(corrected);
-        assert!((state.estimate_position() - 0.0).abs() < 0.1);
-        assert_eq!(state.last_position, 0.0);
+        assert!((state.estimate_position() - 10.0).abs() < 0.1);
+        assert_eq!(state.last_position, 10.0);
+    }
+
+    #[test]
+    fn test_calibrate_position_holds_at_zero_while_buffering() {
+        let mut state = PlayerState::default();
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        assert!(!state.calibrated);
+
+        // While buffering at 0.0s, even if 2 seconds pass, estimate_position stays 0.0s
+        state.last_update = Some(Instant::now() - Duration::from_secs(2));
+        assert_eq!(state.estimate_position(), 0.0);
+
+        // Audio starts advancing to 0.25s: calibration triggers and begins progression!
+        let corrected = state.calibrate_position(0.25, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
+        assert!(corrected);
+        assert!(state.calibrated);
+        assert!((state.estimate_position() - 0.25).abs() < 0.1);
     }
 
     #[test]
@@ -133,8 +177,8 @@ mod tests {
         state.update_playback_dbus("Playing".to_string(), 10.0, 1.0);
         state.last_update = Some(Instant::now() - Duration::from_millis(1000));
 
-        // Estimated is ~11.0s; real position reported as 10.95s (drift 0.05s < 0.25s)
-        let corrected = state.calibrate_position(10.95, 0.25);
+        // Estimated is ~11.0s; real position reported as 10.95s (drift 0.05s < 0.10s)
+        let corrected = state.calibrate_position(10.95, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
         assert!(!corrected);
     }
 
@@ -142,7 +186,7 @@ mod tests {
     fn test_calibrate_position_noop_when_paused() {
         let mut state = PlayerState::default();
         state.update_playback_dbus("Paused".to_string(), 5.0, 1.0);
-        let corrected = state.calibrate_position(0.0, 0.25);
+        let corrected = state.calibrate_position(0.0, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
         assert!(!corrected);
     }
 }

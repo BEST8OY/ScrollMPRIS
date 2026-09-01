@@ -10,10 +10,10 @@ use crate::mpris::metadata::{TrackMetadata, extract_metadata};
 use crate::mpris::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
 
 /// Tuning constants for transient buffering position calibration.
-pub const CALIBRATION_INITIAL_DELAY: Duration = Duration::from_millis(1000);
-pub const CALIBRATION_POLL_INTERVAL: Duration = Duration::from_millis(1200);
+pub const CALIBRATION_INITIAL_DELAY: Duration = Duration::from_millis(400);
+pub const CALIBRATION_POLL_INTERVAL: Duration = Duration::from_millis(800);
 pub const MAX_CALIBRATION_ATTEMPTS: u8 = 15;
-pub const MOVEMENT_DELTA_THRESHOLD_SECS: f64 = 0.2;
+pub const MOVEMENT_DELTA_THRESHOLD_SECS: f64 = 0.08;
 
 /// Transient calibration state machine for detecting when a player actually starts
 /// advancing audio position after buffering.
