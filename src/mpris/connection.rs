@@ -78,20 +78,30 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
         return Ok(0.0);
     }
     let conn = get_dbus_conn().await?;
-    let props = zbus::fdo::PropertiesProxy::builder(&conn)
-        .destination(service.to_string())?
-        .path("/org/mpris/MediaPlayer2")?
-        .build()
-        .await?;
+    let dest = match zbus::names::BusName::try_from(service) {
+        Ok(d) => d,
+        Err(_) => return Ok(0.0),
+    };
 
-    let iface =
-        zbus::names::InterfaceName::from_static_str_unchecked("org.mpris.MediaPlayer2.Player");
-    match props.get(iface, "Position").await {
-        Ok(val) => {
-            if let Ok(microseconds) = i64::try_from(val.clone()) {
-                Ok(microseconds as f64 / 1_000_000.0)
-            } else if let Ok(microseconds) = u64::try_from(val) {
-                Ok(microseconds as f64 / 1_000_000.0)
+    match conn
+        .call_method(
+            Some(dest),
+            "/org/mpris/MediaPlayer2",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.mpris.MediaPlayer2.Player", "Position"),
+        )
+        .await
+    {
+        Ok(msg) => {
+            if let Ok(body) = msg.body().deserialize::<zvariant::OwnedValue>() {
+                if let Ok(microseconds) = i64::try_from(body.clone()) {
+                    Ok(microseconds as f64 / 1_000_000.0)
+                } else if let Ok(microseconds) = u64::try_from(body) {
+                    Ok(microseconds as f64 / 1_000_000.0)
+                } else {
+                    Ok(0.0)
+                }
             } else {
                 Ok(0.0)
             }

@@ -43,25 +43,32 @@ async fn main() -> Result<()> {
                 let tx2 = tx.clone();
                 let player_state3 = player_state.clone();
                 let tx3 = tx.clone();
+                let player_state4 = player_state.clone();
+                let tx4 = tx.clone();
                 let block_list = block_list.clone();
 
                 match MprisEventHandler::new(
-                    move |meta, pos, playback_status, service, rate| {
+                    move |meta, service, pos, playback_status, rate| {
                         let mut state = player_state1.lock().unwrap();
                         state.update_from_metadata(&meta);
                         state.set_service(&service);
                         state.update_playback_dbus(playback_status, pos, rate);
                         let _ = tx1.try_send(());
                     },
-                    move |_meta, pos, _service| {
+                    move |playback_status, pos, rate| {
                         let mut state = player_state2.lock().unwrap();
-                        state.reset_position_cache(pos);
+                        state.update_playback_dbus(playback_status, pos, rate);
                         let _ = tx2.try_send(());
                     },
-                    move |real_pos| {
+                    move |pos| {
                         let mut state = player_state3.lock().unwrap();
+                        state.reset_position_cache(pos);
+                        let _ = tx3.try_send(());
+                    },
+                    move |real_pos| {
+                        let mut state = player_state4.lock().unwrap();
                         if state.calibrate_position(real_pos, DEFAULT_CALIBRATION_DRIFT_THRESHOLD) {
-                            let _ = tx3.try_send(());
+                            let _ = tx4.try_send(());
                         }
                     },
                     block_list,

@@ -84,15 +84,17 @@ impl CalibrationTracker {
 }
 
 /// Event handler managing MPRIS signals, player discovery, and lifecycle monitoring.
-pub struct MprisEventHandler<F, G, H>
+pub struct MprisEventHandler<F, G, H, I>
 where
-    F: FnMut(TrackMetadata, f64, String, String, f64) + Send + 'static,
-    G: FnMut(TrackMetadata, f64, String) + Send + 'static,
+    F: FnMut(TrackMetadata, String, f64, String, f64) + Send + 'static,
+    G: FnMut(String, f64, f64) + Send + 'static,
     H: FnMut(f64) + Send + 'static,
+    I: FnMut(f64) + Send + 'static,
 {
     on_track_change: F,
-    on_seek: G,
-    on_calibrate: H,
+    on_status_change: G,
+    on_seek: H,
+    on_calibrate: I,
     block_list: Vec<String>,
     current_service: String,
     last_track: TrackMetadata,
@@ -100,23 +102,26 @@ where
     conn: zbus::Connection,
 }
 
-impl<F, G, H> MprisEventHandler<F, G, H>
+impl<F, G, H, I> MprisEventHandler<F, G, H, I>
 where
-    F: FnMut(TrackMetadata, f64, String, String, f64) + Send + 'static,
-    G: FnMut(TrackMetadata, f64, String) + Send + 'static,
+    F: FnMut(TrackMetadata, String, f64, String, f64) + Send + 'static,
+    G: FnMut(String, f64, f64) + Send + 'static,
     H: FnMut(f64) + Send + 'static,
+    I: FnMut(f64) + Send + 'static,
 {
     /// Create a new MPRIS event handler.
     pub async fn new(
         on_track_change: F,
-        on_seek: G,
-        on_calibrate: H,
+        on_status_change: G,
+        on_seek: H,
+        on_calibrate: I,
         block_list: Vec<String>,
     ) -> Result<Self, MprisError> {
         let conn = get_dbus_conn().await?;
 
         let mut handler = Self {
             on_track_change,
+            on_status_change,
             on_seek,
             on_calibrate,
             block_list,
@@ -170,7 +175,7 @@ where
         self.last_track = meta.clone();
         self.last_playback_status = playback_status.clone();
 
-        (self.on_track_change)(meta, position, playback_status, service.to_string(), rate);
+        (self.on_track_change)(meta, service.to_string(), position, playback_status, rate);
         Ok(())
     }
 
@@ -182,8 +187,8 @@ where
 
         (self.on_track_change)(
             TrackMetadata::default(),
-            0.0,
             String::new(),
+            0.0,
             String::new(),
             1.0,
         );
@@ -200,34 +205,24 @@ where
     pub async fn handle_events(&mut self) -> Result<(), MprisError> {
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
         let mut name_owner_stream = dbus_proxy.receive_name_owner_changed().await?;
-        let mut idle_ticker = tokio::time::interval(Duration::from_secs(2));
-        idle_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             if !self.current_service.is_empty() {
                 // Active player loop
-                if let Err(e) = self
-                    .run_active_player_loop(&dbus_proxy, &mut name_owner_stream)
-                    .await
-                {
+                if let Err(e) = self.run_active_player_loop(&mut name_owner_stream).await {
                     eprintln!("Error in active player loop: {e}");
                     self.deactivate_and_rediscover().await?;
                 }
             } else {
-                // Idle loop: wait for NameOwnerChanged signal or periodic ticker
-                tokio::select! {
-                    _ = idle_ticker.tick() => {
-                        let _ = self.discover_active_player().await;
-                    }
-                    Some(signal) = name_owner_stream.next() => {
-                        if let Ok(args) = signal.args() {
-                            let name = args.name.as_str();
-                            let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
-                            let old_owner = args.old_owner.as_deref().unwrap_or("");
-                            let new_owner = args.new_owner.as_deref().unwrap_or("");
-                            if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
-                                let _ = self.discover_active_player().await;
-                            }
+                // Idle loop: 100% event-driven wait for NameOwnerChanged signals (zero IPC polling)
+                if let Some(signal) = name_owner_stream.next().await {
+                    if let Ok(args) = signal.args() {
+                        let name = args.name.as_str();
+                        let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
+                        let old_owner = args.old_owner.as_deref().unwrap_or("");
+                        let new_owner = args.new_owner.as_deref().unwrap_or("");
+                        if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
+                            let _ = self.discover_active_player().await;
                         }
                     }
                 }
@@ -238,7 +233,6 @@ where
     /// Inner event loop for the currently active player.
     async fn run_active_player_loop(
         &mut self,
-        dbus_proxy: &DBusProxy<'static>,
         name_owner_stream: &mut NameOwnerChangedStream,
     ) -> Result<(), MprisError> {
         let service = self.current_service.clone();
@@ -259,9 +253,6 @@ where
         } else {
             None
         };
-
-        let mut liveness_ticker = tokio::time::interval(Duration::from_secs(2));
-        liveness_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Initialize transient calibration tracker with authoritative player position
         let initial_pos = get_position(&service).await.unwrap_or(0.0);
@@ -286,7 +277,7 @@ where
                     if let Ok(args) = signal.args() {
                         let pos_sec = args.position as f64 / 1_000_000.0;
                         tracker.arm(pos_sec);
-                        (self.on_seek)(self.last_track.clone(), pos_sec, self.current_service.clone());
+                        (self.on_seek)(pos_sec);
                     }
                 }
 
@@ -302,11 +293,9 @@ where
                         } else {
                             tracker.disarm();
                         }
-                        (self.on_track_change)(
-                            self.last_track.clone(),
-                            position,
+                        (self.on_status_change)(
                             status,
-                            self.current_service.clone(),
+                            position,
                             rate,
                         );
                     }
@@ -327,9 +316,9 @@ where
                             }
                             (self.on_track_change)(
                                 new_track,
+                                self.current_service.clone(),
                                 position,
                                 self.last_playback_status.clone(),
-                                self.current_service.clone(),
                                 rate,
                             );
                         }
@@ -340,11 +329,9 @@ where
                 Some(_) = rate_stream.next() => {
                     let rate = proxy.rate().await.unwrap_or(1.0);
                     let position = get_position(&self.current_service).await.unwrap_or(0.0);
-                    (self.on_track_change)(
-                        self.last_track.clone(),
-                        position,
+                    (self.on_status_change)(
                         self.last_playback_status.clone(),
-                        self.current_service.clone(),
+                        position,
                         rate,
                     );
                 }
@@ -401,25 +388,6 @@ where
                                 _ => {}
                             }
                         }
-                    }
-                }
-
-                // 7. Authoritative liveness check via D-Bus daemon
-                _ = liveness_ticker.tick() => {
-                    let has_owner = match zbus::names::BusName::try_from(self.current_service.as_str()) {
-                        Ok(bus_name) => matches!(
-                            tokio::time::timeout(
-                                Duration::from_secs(3),
-                                dbus_proxy.name_has_owner(bus_name)
-                            ).await,
-                            Ok(Ok(true))
-                        ),
-                        Err(_) => false,
-                    };
-
-                    if !has_owner {
-                        self.deactivate_and_rediscover().await?;
-                        return Ok(());
                     }
                 }
             }
