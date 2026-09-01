@@ -2,11 +2,11 @@ use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
 use ScrollMPRIS::config::Config;
 use ScrollMPRIS::mpris::events::MprisEventHandler;
-use ScrollMPRIS::player::PlayerState;
+use ScrollMPRIS::player::{DEFAULT_CALIBRATION_DRIFT_THRESHOLD, PlayerState};
 use ScrollMPRIS::utils::{ScrollStateMap, print_status};
+use anyhow::Result;
 use tokio::sync::mpsc;
 
 #[tokio::main(flavor = "current_thread")]
@@ -41,6 +41,8 @@ async fn main() -> Result<()> {
                 let tx1 = tx.clone();
                 let player_state2 = player_state.clone();
                 let tx2 = tx.clone();
+                let player_state3 = player_state.clone();
+                let tx3 = tx.clone();
                 let block_list = block_list.clone();
 
                 match MprisEventHandler::new(
@@ -55,6 +57,12 @@ async fn main() -> Result<()> {
                         let mut state = player_state2.lock().unwrap();
                         state.reset_position_cache(pos);
                         let _ = tx2.try_send(());
+                    },
+                    move |real_pos| {
+                        let mut state = player_state3.lock().unwrap();
+                        if state.calibrate_position(real_pos, DEFAULT_CALIBRATION_DRIFT_THRESHOLD) {
+                            let _ = tx3.try_send(());
+                        }
                     },
                     block_list,
                 )

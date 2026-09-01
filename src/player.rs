@@ -38,6 +38,9 @@ impl Default for PlayerState {
     }
 }
 
+/// Default position drift threshold (in seconds) before applying calibration corrections.
+pub const DEFAULT_CALIBRATION_DRIFT_THRESHOLD: f64 = 0.25;
+
 impl PlayerState {
     pub fn update_from_metadata(&mut self, meta: &TrackMetadata) {
         self.title = meta.title.clone();
@@ -83,5 +86,63 @@ impl PlayerState {
         self.last_position = position;
         self.last_update = Some(Instant::now());
         self.position = position;
+    }
+
+    /// Calibrate estimated position against authoritative player position.
+    /// Updates anchor instant and position only if detected drift exceeds `threshold`.
+    /// Returns true if a correction was applied.
+    pub fn calibrate_position(&mut self, real_position: f64, threshold: f64) -> bool {
+        if self.playing {
+            let estimated = self.estimate_position();
+            let diff = (estimated - real_position).abs();
+            if diff >= threshold {
+                self.last_position = real_position;
+                self.last_update = Some(Instant::now());
+                self.position = real_position;
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_calibrate_position_detects_drift() {
+        let mut state = PlayerState::default();
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        // Simulate 2 seconds of buffering where local clock advanced to 2.0s
+        state.last_update = Some(Instant::now() - Duration::from_secs(2));
+
+        assert!((state.estimate_position() - 2.0).abs() < 0.1);
+
+        // Authoritative position from player is still 0.0s (just finished buffering)
+        let corrected = state.calibrate_position(0.0, 0.25);
+        assert!(corrected);
+        assert!((state.estimate_position() - 0.0).abs() < 0.1);
+        assert_eq!(state.last_position, 0.0);
+    }
+
+    #[test]
+    fn test_calibrate_position_ignores_small_delta() {
+        let mut state = PlayerState::default();
+        state.update_playback_dbus("Playing".to_string(), 10.0, 1.0);
+        state.last_update = Some(Instant::now() - Duration::from_millis(1000));
+
+        // Estimated is ~11.0s; real position reported as 10.95s (drift 0.05s < 0.25s)
+        let corrected = state.calibrate_position(10.95, 0.25);
+        assert!(!corrected);
+    }
+
+    #[test]
+    fn test_calibrate_position_noop_when_paused() {
+        let mut state = PlayerState::default();
+        state.update_playback_dbus("Paused".to_string(), 5.0, 1.0);
+        let corrected = state.calibrate_position(0.0, 0.25);
+        assert!(!corrected);
     }
 }

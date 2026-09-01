@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use zvariant::OwnedValue;
 
-use crate::mpris::connection::{get_dbus_conn, MprisError};
+use crate::mpris::connection::{MprisError, get_dbus_conn};
 use crate::mpris::proxies::MediaPlayer2PlayerProxy;
 
 /// Normalized track metadata from an MPRIS player.
@@ -30,23 +30,42 @@ pub fn is_no_track(trackid: &str) -> bool {
 pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
     if let Ok(s) = <&str>::try_from(val) {
         let trimmed = s.trim();
-        return if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        return if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
     }
     if let Ok(vec) = <Vec<String>>::try_from(val.clone()) {
-        return vec.into_iter().map(|s| s.trim().to_string()).find(|s| !s.is_empty());
+        return vec
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .find(|s| !s.is_empty());
     }
     match &**val {
         zvariant::Value::Str(s) => {
             let trimmed = s.as_str().trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         }
         zvariant::Value::Array(arr) => {
             if let Ok(Some(first)) = arr.get::<String>(0) {
                 let trimmed = first.trim();
-                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
             } else if let Ok(Some(first_str)) = arr.get::<&str>(0) {
                 let trimmed = first_str.trim();
-                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
             } else {
                 None
             }
@@ -59,7 +78,11 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
 pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
     if let Ok(s) = <&str>::try_from(val) {
         let trimmed = s.trim();
-        return if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        return if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
     }
     if let Ok(vec) = <Vec<String>>::try_from(val.clone()) {
         let joined = vec
@@ -68,12 +91,20 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
             .filter(|a| !a.is_empty())
             .collect::<Vec<_>>()
             .join(", ");
-        return if joined.is_empty() { None } else { Some(joined) };
+        return if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        };
     }
     match &**val {
         zvariant::Value::Str(s) => {
             let trimmed = s.as_str().trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         }
         zvariant::Value::Array(arr) => {
             let strings: Vec<String> = arr
@@ -81,16 +112,28 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
                 .filter_map(|elem| {
                     if let Ok(s) = <&str>::try_from(elem) {
                         let trimmed = s.trim();
-                        if !trimmed.is_empty() { Some(trimmed.to_string()) } else { None }
+                        if !trimmed.is_empty() {
+                            Some(trimmed.to_string())
+                        } else {
+                            None
+                        }
                     } else if let Ok(s) = <String>::try_from(elem.clone()) {
                         let trimmed = s.trim();
-                        if !trimmed.is_empty() { Some(trimmed.to_string()) } else { None }
+                        if !trimmed.is_empty() {
+                            Some(trimmed.to_string())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
                 })
                 .collect();
-            if strings.is_empty() { None } else { Some(strings.join(", ")) }
+            if strings.is_empty() {
+                None
+            } else {
+                Some(strings.join(", "))
+            }
         }
         _ => None,
     }
@@ -109,7 +152,9 @@ pub fn extract_length_seconds(val: &OwnedValue) -> Option<f64> {
 
 /// Extract metadata fields from a D-Bus property map.
 pub fn extract_metadata(map: &HashMap<String, OwnedValue>) -> TrackMetadata {
-    let trackid = map.get("mpris:trackid").and_then(extract_string_or_first_item);
+    let trackid = map
+        .get("mpris:trackid")
+        .and_then(extract_string_or_first_item);
     let title = map
         .get("xesam:title")
         .and_then(extract_string_or_first_item)
@@ -257,8 +302,14 @@ mod tests {
         assert_eq!(meta.album, "Array Album 1, Array Album 2");
 
         let val_str = OwnedValue::try_from(Value::from("single")).unwrap();
-        assert_eq!(extract_string_or_first_item(&val_str), Some("single".to_string()));
-        assert_eq!(extract_joined_string_array(&val_str), Some("single".to_string()));
+        assert_eq!(
+            extract_string_or_first_item(&val_str),
+            Some("single".to_string())
+        );
+        assert_eq!(
+            extract_joined_string_array(&val_str),
+            Some("single".to_string())
+        );
 
         let val_len_i64 = OwnedValue::try_from(Value::from(120_000_000i64)).unwrap();
         assert_eq!(extract_length_seconds(&val_len_i64), Some(120.0));
@@ -290,4 +341,3 @@ mod tests {
         assert_eq!(meta, TrackMetadata::default());
     }
 }
-

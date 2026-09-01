@@ -13,7 +13,15 @@ pub enum ScrollDirection {
 
 /// Scroll mode for text output using industry-standard names.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default, serde::Deserialize, serde::Serialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    clap::ValueEnum,
+    Default,
+    serde::Deserialize,
+    serde::Serialize,
 )]
 #[clap(rename_all = "kebab-case")]
 #[serde(rename_all = "lowercase")]
@@ -111,7 +119,11 @@ pub fn scroll_frame(
                         state.hold += 1;
                     } else {
                         state.hold = 0;
-                        state.offset = if state.offset >= max_offset { 0 } else { state.offset + 1 };
+                        state.offset = if state.offset >= max_offset {
+                            0
+                        } else {
+                            state.offset + 1
+                        };
                     }
                 } else {
                     state.offset += 1;

@@ -84,7 +84,8 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
         .build()
         .await?;
 
-    let iface = zbus::names::InterfaceName::from_static_str_unchecked("org.mpris.MediaPlayer2.Player");
+    let iface =
+        zbus::names::InterfaceName::from_static_str_unchecked("org.mpris.MediaPlayer2.Player");
     match props.get(iface, "Position").await {
         Ok(val) => {
             if let Ok(microseconds) = i64::try_from(val.clone()) {
@@ -106,7 +107,10 @@ mod tests {
     #[test]
     fn test_is_blocked() {
         let block_list = vec!["firefox".to_string(), "vlc".to_string()];
-        assert!(is_blocked("org.mpris.MediaPlayer2.firefox.instance_1", &block_list));
+        assert!(is_blocked(
+            "org.mpris.MediaPlayer2.firefox.instance_1",
+            &block_list
+        ));
         assert!(is_blocked("org.mpris.MediaPlayer2.vlc", &block_list));
         assert!(is_blocked("org.mpris.MediaPlayer2.FIREFOX", &block_list));
         assert!(!is_blocked("org.mpris.MediaPlayer2.spotify", &block_list));
@@ -119,4 +123,3 @@ mod tests {
         assert!(!is_blocked("org.mpris.MediaPlayer2.spotify", &empty_list));
     }
 }
-

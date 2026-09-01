@@ -12,13 +12,11 @@ static BLOCK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(||
     regex::Regex::new(r"(?s)\[scroll(?::([^\]]+))?\](.*?)\[/scroll\]").unwrap()
 });
 
-static FIELD_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\{([a-zA-Z_]+)(?::([^\}]+))?\}").unwrap()
-});
+static FIELD_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\{([a-zA-Z_]+)(?::([^\}]+))?\}").unwrap());
 
-static FIELD_SPEC_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\{[a-zA-Z_]+:[^\}]+\}").unwrap()
-});
+static FIELD_SPEC_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\{[a-zA-Z_]+:[^\}]+\}").unwrap());
 
 /// Extract clean player name from an MPRIS D-Bus service name (e.g. "org.mpris.MediaPlayer2.spotify" -> "spotify").
 pub fn extract_player_name(service: &str) -> Option<String> {
@@ -29,12 +27,12 @@ pub fn extract_player_name(service: &str) -> Option<String> {
     let stripped = trimmed
         .strip_prefix("org.mpris.MediaPlayer2.")
         .unwrap_or(trimmed);
-    let name = stripped.split('.').next().unwrap_or(stripped).to_lowercase();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    let name = stripped
+        .split('.')
+        .next()
+        .unwrap_or(stripped)
+        .to_lowercase();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// Retrieve the player brand icon glyph.
@@ -96,7 +94,9 @@ pub fn get_field_value(field: &str, player_state: &PlayerState, config: &Config)
         }
         "remaining" | "countdown" => {
             let pos = player_state.estimate_position();
-            let remaining = player_state.length.map_or(0.0, |len| (len - pos).max(0.0));
+            let remaining = player_state
+                .length
+                .map_or(0.0, |len| (len.floor() - pos.floor()).max(0.0));
             format_position(remaining)
         }
         "length" | "duration" => player_state.length.map(format_position).unwrap_or_default(),
@@ -336,7 +336,7 @@ pub fn print_status(
 
 /// Formats time (in seconds) to a mm:ss or hh:mm:ss string.
 pub fn format_position(seconds: f64) -> String {
-    let total_seconds = seconds.round().max(0.0) as i64;
+    let total_seconds = seconds.floor().max(0.0) as i64;
     if total_seconds >= 3600 {
         let hours = total_seconds / 3600;
         let minutes = (total_seconds % 3600) / 60;
@@ -400,21 +400,28 @@ mod tests {
     #[test]
     fn test_format_position_under_hour() {
         assert_eq!(format_position(0.0), "00:00");
+        assert_eq!(format_position(0.75), "00:00");
         assert_eq!(format_position(65.0), "01:05");
+        assert_eq!(format_position(65.9), "01:05");
         assert_eq!(format_position(599.0), "09:59");
     }
 
     #[test]
     fn test_format_position_over_hour() {
         assert_eq!(format_position(3600.0), "01:00:00");
+        assert_eq!(format_position(3600.8), "01:00:00");
         assert_eq!(format_position(3665.0), "01:01:05");
         assert_eq!(format_position(7322.0), "02:02:02");
     }
 
     #[test]
     fn test_format_metadata() {
-        let result =
-            format_metadata("{title} - {artist}", "Song Title", "Artist Name", "Album Name");
+        let result = format_metadata(
+            "{title} - {artist}",
+            "Song Title",
+            "Artist Name",
+            "Album Name",
+        );
         assert_eq!(result, "Song Title - Artist Name");
     }
 
@@ -453,18 +460,9 @@ mod tests {
         };
         state.set_service("org.mpris.MediaPlayer2.spotify");
 
-        assert_eq!(
-            get_field_value("player_icon", &state, &config),
-            ""
-        );
-        assert_eq!(
-            get_field_value("status_icon", &state, &config),
-            ""
-        );
-        assert_eq!(
-            get_field_value("icon", &state, &config),
-            " "
-        );
+        assert_eq!(get_field_value("player_icon", &state, &config), "");
+        assert_eq!(get_field_value("status_icon", &state, &config), "");
+        assert_eq!(get_field_value("icon", &state, &config), " ");
     }
 
     #[test]
@@ -595,7 +593,13 @@ mod tests {
         let mut last_output = String::new();
 
         // 1. Default format_stopped is empty -> outputs empty text (Waybar auto-hides)
-        print_status(&config, &mut state, &mut scroll_states, &mut last_output, false);
+        print_status(
+            &config,
+            &mut state,
+            &mut scroll_states,
+            &mut last_output,
+            false,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&last_output).unwrap();
         assert_eq!(parsed["text"], "");
         assert_eq!(parsed["class"], serde_json::json!(["stopped"]));
@@ -604,7 +608,13 @@ mod tests {
         config.format_stopped = "{status_icon} No Media".to_string();
         config.status_icons.stopped = "⏹".to_string();
         last_output.clear();
-        print_status(&config, &mut state, &mut scroll_states, &mut last_output, false);
+        print_status(
+            &config,
+            &mut state,
+            &mut scroll_states,
+            &mut last_output,
+            false,
+        );
         let parsed: serde_json::Value = serde_json::from_str(&last_output).unwrap();
         assert_eq!(parsed["text"], "⏹ No Media");
         assert_eq!(parsed["class"], serde_json::json!(["stopped"]));
@@ -649,10 +659,12 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&last_output).expect("Must be valid JSON");
         assert_eq!(parsed["class"], serde_json::json!(["playing", "spotify"]));
-        assert!(parsed["text"]
-            .as_str()
-            .unwrap()
-            .contains("Song \"With Quotes\""));
+        assert!(
+            parsed["text"]
+                .as_str()
+                .unwrap()
+                .contains("Song \"With Quotes\"")
+        );
     }
 
     #[test]

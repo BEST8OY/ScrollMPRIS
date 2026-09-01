@@ -129,11 +129,7 @@ pub struct CliArgs {
     pub width: Option<usize>,
 
     /// Block certain players (comma-separated list)
-    #[arg(
-        short = 'b',
-        long = "blocked",
-        value_delimiter = ','
-    )]
+    #[arg(short = 'b', long = "blocked", value_delimiter = ',')]
     pub blocked: Option<Vec<String>>,
 
     /// Default scrolling behavior: "marquee", "restart", or "bounce"
