@@ -13,15 +13,18 @@ A fast, async, pure Rust scrolling MPRIS module for [Waybar](https://github.com/
 ## ✨ Features
 
 - **Pure Rust Async D-Bus (`zbus 5`)**: Zero C library dependencies (`libdbus-1` not required).
+- **100% Event-Driven (Zero IPC Polling)**: Pure signal-driven architecture with zero background polling loops and complete silence while idle or paused.
+- **Streaming Buffering Calibration**: Intelligent transient calibration state machine automatically compensates for streaming playback latency (e.g. Spotify), locking timers in sync without premature drift.
 - **Dual-Tier Player Discovery**: Prefers `playerctld` for recency-ordered player prioritization, with automatic fallback to standard D-Bus discovery.
 - **Real-Time Lifecycle Tracking**: Instant UI response to player startup, exit, and handoff via D-Bus `NameOwnerChanged` signals.
 - **Multi-Artist & Album Support**: Formats collaborating/featured artists (`xesam:artist` joined with commas) and album metadata.
-- **Rate-Adjusted Position Estimation**: Sub-second accurate elapsed & countdown timers dynamically adjusted by playback speed.
+- **Sub-Second Rate-Adjusted Timers**: Timer precision is decoupled from the scrolling speed, delivering responsive progress updates dynamically adjusted by playback rate.
 - **Pure Token-Driven Layout**: 100% template-controlled output. Place brand icons, state glyphs, timers, and metadata anywhere.
 - **Field-Aware Inline Scrolling**: Scroll individual fields independently (e.g. `{title:20:marquee} | {artist:12:bounce}`).
 - **Industry-Standard Scrolling Modes**: `marquee` (continuous ticker), `restart` (loop with hold), and `bounce` (pendulum back & forth).
 - **TOML Configuration File**: Persistent declarative settings at `~/.config/ScrollMPRIS/config.toml` with automatic XDG resolution.
 - **Freeze on Pause**: Option to freeze the ticker and snap text back to the start when music is paused.
+- **Ultra-Lightweight Runtime**: Optimized single-threaded Tokio execution with negligible CPU and memory footprint.
 
 ---
 
