@@ -11,10 +11,25 @@ use crate::mpris::metadata::{TrackMetadata, extract_metadata};
 use crate::mpris::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
 
 /// Tuning constants for transient buffering position calibration.
-pub const CALIBRATION_INITIAL_DELAY: Duration = Duration::from_millis(400);
-pub const CALIBRATION_POLL_INTERVAL: Duration = Duration::from_millis(800);
-pub const MAX_CALIBRATION_ATTEMPTS: u8 = 15;
-pub const MOVEMENT_DELTA_THRESHOLD_SECS: f64 = 0.08;
+pub const CALIBRATION_INITIAL_DELAY: Duration = Duration::from_millis(50);
+pub const CALIBRATION_CONFIRMATION_INTERVAL: Duration = Duration::from_millis(250);
+pub const CALIBRATION_STEADY_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+pub const MAX_CALIBRATION_ATTEMPTS: u8 = 35;
+pub const MAX_ERROR_ATTEMPTS: u8 = 8;
+pub const MOVEMENT_DELTA_THRESHOLD_SECS: f64 = 0.03;
+
+/// Returns the adaptive delay for buffering edge-detection probes.
+fn probe_delay(attempt: u8) -> Duration {
+    match attempt {
+        0 => CALIBRATION_INITIAL_DELAY,
+        1 => Duration::from_millis(100),
+        2 => Duration::from_millis(150),
+        3 => Duration::from_millis(250),
+        4 => Duration::from_millis(400),
+        5 => Duration::from_millis(600),
+        _ => CALIBRATION_STEADY_POLL_INTERVAL,
+    }
+}
 
 /// Result of stepping the calibration state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +45,7 @@ pub enum CalibrationStepResult {
 struct CalibrationTracker {
     timer: Option<Pin<Box<tokio::time::Sleep>>>,
     attempts: u8,
+    error_attempts: u8,
     confirmed: bool,
     anchor_pos: f64,
 }
@@ -39,6 +55,7 @@ impl CalibrationTracker {
         let mut tracker = Self {
             timer: None,
             attempts: 0,
+            error_attempts: 0,
             confirmed: false,
             anchor_pos: initial_pos,
         };
@@ -50,9 +67,10 @@ impl CalibrationTracker {
 
     fn arm(&mut self, anchor_pos: f64) {
         self.attempts = 0;
+        self.error_attempts = 0;
         self.confirmed = false;
         self.anchor_pos = anchor_pos;
-        self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_INITIAL_DELAY)));
+        self.timer = Some(Box::pin(tokio::time::sleep(probe_delay(0))));
     }
 
     fn disarm(&mut self) {
@@ -71,13 +89,14 @@ impl CalibrationTracker {
     /// Step the calibration state machine given the newly fetched authoritative position.
     fn on_step(&mut self, real_pos: f64) -> CalibrationStepResult {
         self.attempts += 1;
+        self.error_attempts = 0;
         let moved = (real_pos - self.anchor_pos).abs() > MOVEMENT_DELTA_THRESHOLD_SECS;
 
         if moved {
             if !self.confirmed {
                 // Audio started advancing; schedule 1 final confirmation check to lock in steady-state sync
                 self.confirmed = true;
-                self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_POLL_INTERVAL)));
+                self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_CONFIRMATION_INTERVAL)));
                 CalibrationStepResult::Continue
             } else {
                 // Steady-state verified: disarm calibration for the remainder of this track
@@ -85,11 +104,24 @@ impl CalibrationTracker {
                 CalibrationStepResult::Confirmed
             }
         } else if self.attempts < MAX_CALIBRATION_ATTEMPTS {
-            // Still buffering (real_pos unchanged from anchor); retry
-            self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_POLL_INTERVAL)));
+            // Still buffering (real_pos unchanged from anchor); adaptive retry
+            self.timer = Some(Box::pin(tokio::time::sleep(probe_delay(self.attempts))));
             CalibrationStepResult::Continue
         } else {
             // Reached maximum attempts (slow network timeout): disarm
+            self.disarm();
+            CalibrationStepResult::TimedOut
+        }
+    }
+
+    /// Handle position query failure (e.g. player does not support Position property).
+    fn on_error(&mut self) -> CalibrationStepResult {
+        self.error_attempts += 1;
+        if self.error_attempts < MAX_ERROR_ATTEMPTS {
+            self.timer = Some(Box::pin(tokio::time::sleep(Duration::from_millis(400))));
+            CalibrationStepResult::Continue
+        } else {
+            // Player persistently fails position queries: time out so local clock can fallback
             self.disarm();
             CalibrationStepResult::TimedOut
         }
@@ -178,7 +210,7 @@ impl MprisEventHandler {
     /// Switch active tracking to the specified player service.
     async fn switch_to_player(&mut self, service: &str) -> Result<(), MprisError> {
         let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
-            .destination(service.to_string())?
+            .destination(service)?
             .build()
             .await?;
 
@@ -291,7 +323,7 @@ impl MprisEventHandler {
     ) -> Result<(), MprisError> {
         let service = self.current_service.clone();
         let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
-            .destination(service.clone())?
+            .destination(service.as_str())?
             .build()
             .await?;
 
@@ -342,7 +374,7 @@ impl MprisEventHandler {
                                 }
                             }
                             Err(_) => {
-                                if tracker.on_step(tracker.anchor_pos) == CalibrationStepResult::TimedOut {
+                                if tracker.on_error() == CalibrationStepResult::TimedOut {
                                     self.emit(MprisEvent::CalibrationTimeout);
                                 }
                             }
@@ -565,6 +597,42 @@ mod tests {
             } else {
                 assert_eq!(res, CalibrationStepResult::TimedOut);
                 assert!(tracker.timer.is_none()); // Disarmed after max attempts
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tracker_long_buffering_tolerance() {
+        let mut tracker = CalibrationTracker::new(true, 0.0);
+
+        // Player buffers online for 15 attempts (past fast probes into 1s interval)
+        for i in 1..=15 {
+            assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Continue);
+            assert_eq!(tracker.attempts, i);
+            assert!(tracker.timer.is_some());
+        }
+
+        // At attempt 16 (e.g. after ~10s of buffering), audio finally moves to 0.4s
+        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Continue);
+        assert!(tracker.confirmed);
+        assert!(tracker.timer.is_some());
+
+        // Final confirmation check
+        assert_eq!(tracker.on_step(0.65), CalibrationStepResult::Confirmed);
+        assert!(tracker.timer.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_persistent_error_timeout() {
+        let mut tracker = CalibrationTracker::new(true, 0.0);
+        for i in 1..=MAX_ERROR_ATTEMPTS {
+            let res = tracker.on_error();
+            if i < MAX_ERROR_ATTEMPTS {
+                assert_eq!(res, CalibrationStepResult::Continue);
+                assert!(tracker.timer.is_some());
+            } else {
+                assert_eq!(res, CalibrationStepResult::TimedOut);
+                assert!(tracker.timer.is_none());
             }
         }
     }
