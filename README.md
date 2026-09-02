@@ -16,7 +16,7 @@ A fast, async, pure Rust scrolling MPRIS module for [Waybar](https://github.com/
 - **100% Event-Driven (Zero IPC Polling)**: Pure signal-driven architecture with zero background polling loops and complete silence while idle or paused.
 - **Adaptive Playback Calibration**: Transient position calibration automatically compensates for streaming buffer delays (e.g., Spotify, browser MPRIS extensions), Bluetooth latency, and seek jitter across all media players—locking into sample-accurate sync within ~1.2s before self-disarming for zero ongoing D-Bus polling overhead.
 - **Dual-Tier Player Discovery**: Prefers `playerctld` for recency-ordered player prioritization, with automatic fallback to standard D-Bus discovery.
-- **Real-Time Lifecycle Tracking**: Instant UI response to player startup, exit, and handoff via D-Bus `NameOwnerChanged` signals.
+- **Real-Time Lifecycle Tracking**: Instant UI response to player startup, exit, and handoff via D-Bus `NameOwnerChanged` and `playerctld` signals.
 - **Multi-Artist & Album Support**: Formats collaborating/featured artists (`xesam:artist` joined with commas) and album metadata.
 - **Sub-Second Rate-Adjusted Timers**: Timer precision is decoupled from the scrolling speed, delivering responsive progress updates dynamically adjusted by playback rate.
 - **Pure Token-Driven Layout**: 100% template-controlled output. Place brand icons, state glyphs, timers, and metadata anywhere.
