@@ -78,12 +78,10 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
         return Ok(0.0);
     }
     let conn = get_dbus_conn().await?;
-    let dest = match zbus::names::BusName::try_from(service) {
-        Ok(d) => d,
-        Err(_) => return Ok(0.0),
-    };
+    let dest = zbus::names::BusName::try_from(service.to_string())
+        .map_err(|e| MprisError::Fdo(zbus::fdo::Error::Failed(format!("Invalid bus name: {e}"))))?;
 
-    match conn
+    let msg = conn
         .call_method(
             Some(dest),
             "/org/mpris/MediaPlayer2",
@@ -91,22 +89,18 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
             "Get",
             &("org.mpris.MediaPlayer2.Player", "Position"),
         )
-        .await
-    {
-        Ok(msg) => {
-            if let Ok(body) = msg.body().deserialize::<zvariant::OwnedValue>() {
-                if let Ok(microseconds) = i64::try_from(body.clone()) {
-                    Ok(microseconds as f64 / 1_000_000.0)
-                } else if let Ok(microseconds) = u64::try_from(body) {
-                    Ok(microseconds as f64 / 1_000_000.0)
-                } else {
-                    Ok(0.0)
-                }
-            } else {
-                Ok(0.0)
-            }
-        }
-        Err(_) => Ok(0.0),
+        .await?;
+
+    let body = msg.body().deserialize::<zvariant::OwnedValue>()?;
+
+    if let Ok(microseconds) = i64::try_from(body.clone()) {
+        Ok(microseconds as f64 / 1_000_000.0)
+    } else if let Ok(microseconds) = u64::try_from(body) {
+        Ok(microseconds as f64 / 1_000_000.0)
+    } else {
+        Err(MprisError::Fdo(zbus::fdo::Error::Failed(
+            "Invalid Position value".to_string(),
+        )))
     }
 }
 
@@ -131,5 +125,15 @@ mod tests {
     fn test_is_blocked_empty_list() {
         let empty_list = vec![];
         assert!(!is_blocked("org.mpris.MediaPlayer2.spotify", &empty_list));
+    }
+
+    #[tokio::test]
+    async fn test_get_position_empty_service() {
+        assert_eq!(get_position("").await.unwrap(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_get_position_invalid_bus_name() {
+        assert!(get_position("invalid name with spaces").await.is_err());
     }
 }
