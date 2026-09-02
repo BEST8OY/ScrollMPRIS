@@ -57,16 +57,144 @@ pub async fn get_active_player_names() -> Result<Vec<String>, MprisError> {
     let mpris_names: Vec<String> = names
         .into_iter()
         .map(|n| n.to_string())
-        .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
+        .filter(|n| {
+            n.starts_with("org.mpris.MediaPlayer2.") && n != "org.mpris.MediaPlayer2.playerctld"
+        })
         .collect();
 
     Ok(mpris_names)
 }
 
+/// Playback priority score for active player selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlaybackPriority {
+    Unresponsive = 0,
+    Stopped = 1,
+    Paused = 2,
+    Playing = 3,
+}
+
+impl PlaybackPriority {
+    pub fn from_status_str(status: &str) -> Self {
+        match status {
+            "Playing" => PlaybackPriority::Playing,
+            "Paused" => PlaybackPriority::Paused,
+            "Stopped" => PlaybackPriority::Stopped,
+            _ => PlaybackPriority::Unresponsive,
+        }
+    }
+}
+
+/// Probe a player's PlaybackStatus with a short timeout to prevent slow or wedged players from hanging.
+pub async fn query_player_priority(conn: &zbus::Connection, service: &str) -> PlaybackPriority {
+    let query = async {
+        let proxy = MediaPlayer2PlayerProxy::builder(conn)
+            .destination(service)
+            .ok()?
+            .build()
+            .await
+            .ok()?;
+        let status = proxy.playback_status().await.ok()?;
+        Some(PlaybackPriority::from_status_str(&status))
+    };
+
+    tokio::time::timeout(std::time::Duration::from_millis(50), query)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(PlaybackPriority::Unresponsive)
+}
+
+/// Find the optimal active MPRIS player service prioritizing playback state (`Playing` > `Paused` > `Stopped`).
+///
+/// If `current_service` is provided and has the highest priority level found, it is retained to avoid
+/// unnecessary bouncing between equal-priority players. If `preferred_sender_unique` matches a player's
+/// unique bus name and that player is `Playing`, it is given precedence.
+pub async fn find_best_active_service(
+    block_list: &[String],
+    current_service: Option<&str>,
+    preferred_sender_unique: Option<&str>,
+) -> Result<Option<String>, MprisError> {
+    let names = get_active_player_names().await?;
+    let candidates: Vec<String> = names
+        .into_iter()
+        .filter(|s| !is_blocked(s, block_list))
+        .collect();
+
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    if candidates.len() == 1 {
+        return Ok(candidates.into_iter().next());
+    }
+
+    let conn = get_dbus_conn().await?;
+    let dbus_proxy = DBusProxy::new(&conn).await?;
+
+    // Query status and unique bus name for each candidate concurrently
+    let query_futs = candidates.iter().map(|svc| {
+        let conn = conn.clone();
+        let dbus_proxy = &dbus_proxy;
+        async move {
+            let priority = query_player_priority(&conn, svc).await;
+            let is_preferred = if let Some(target_unique) = preferred_sender_unique {
+                if let Ok(bus_name) = BusName::try_from(svc.as_str()) {
+                    dbus_proxy
+                        .get_name_owner(bus_name)
+                        .await
+                        .ok()
+                        .map(|u| u.as_str() == target_unique)
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            (priority, is_preferred)
+        }
+    });
+
+    let results = futures_util::future::join_all(query_futs).await;
+
+    // Structure: (service_name, priority, is_preferred, original_index)
+    let mut scored: Vec<(&String, PlaybackPriority, bool, usize)> = candidates
+        .iter()
+        .zip(results)
+        .enumerate()
+        .map(|(idx, (svc, (prio, is_pref)))| (svc, prio, is_pref, idx))
+        .collect();
+
+    // Sort:
+    // 1. PlaybackPriority descending
+    // 2. Preferred sender descending (true > false)
+    // 3. Original list order ascending (stable)
+    scored.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| a.3.cmp(&b.3))
+    });
+
+    let (best_service, best_priority, best_is_pref, _) = scored[0];
+
+    // Stability check: If current_service is still alive and has the same best priority (e.g. both are Paused),
+    // keep current_service instead of hopping arbitrarily, unless a new preferred player is explicitly Playing.
+    if let Some(curr) = current_service
+        && !best_is_pref
+        && let Some((_, curr_priority, _, _)) =
+            scored.iter().find(|(s, _, _, _)| s.as_str() == curr)
+        && *curr_priority >= best_priority
+    {
+        return Ok(Some(curr.to_string()));
+    }
+
+    Ok(Some(best_service.clone()))
+}
+
 /// Find the first active MPRIS player service that is not in the block list.
 pub async fn find_active_service(block_list: &[String]) -> Result<Option<String>, MprisError> {
-    let names = get_active_player_names().await?;
-    Ok(names.into_iter().find(|s| !is_blocked(s, block_list)))
+    find_best_active_service(block_list, None, None).await
 }
 
 /// Check if a player service name should be blocked (case-insensitive substring match).
@@ -129,5 +257,36 @@ mod tests {
     #[tokio::test]
     async fn test_get_position_invalid_bus_name() {
         assert!(get_position("invalid name with spaces").await.is_err());
+    }
+
+    #[test]
+    fn test_playback_priority_ordering() {
+        assert!(PlaybackPriority::Playing > PlaybackPriority::Paused);
+        assert!(PlaybackPriority::Paused > PlaybackPriority::Stopped);
+        assert!(PlaybackPriority::Stopped > PlaybackPriority::Unresponsive);
+    }
+
+    #[test]
+    fn test_playback_priority_from_status_str() {
+        assert_eq!(
+            PlaybackPriority::from_status_str("Playing"),
+            PlaybackPriority::Playing
+        );
+        assert_eq!(
+            PlaybackPriority::from_status_str("Paused"),
+            PlaybackPriority::Paused
+        );
+        assert_eq!(
+            PlaybackPriority::from_status_str("Stopped"),
+            PlaybackPriority::Stopped
+        );
+        assert_eq!(
+            PlaybackPriority::from_status_str("Unknown"),
+            PlaybackPriority::Unresponsive
+        );
+        assert_eq!(
+            PlaybackPriority::from_status_str(""),
+            PlaybackPriority::Unresponsive
+        );
     }
 }

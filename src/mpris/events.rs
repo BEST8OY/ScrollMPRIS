@@ -1,12 +1,16 @@
 //! Event watching and event handler registration for MPRIS using zbus.
 
 use futures_util::StreamExt;
+use std::collections::HashMap;
+use std::ops::Deref;
 use std::pin::Pin;
 use std::time::Duration;
 use zbus::fdo::{DBusProxy, NameOwnerChangedStream};
 use zbus::names::BusName;
+use zbus::{MatchRule, MessageStream};
+use zvariant::OwnedValue;
 
-use crate::mpris::connection::{MprisError, find_active_service, get_dbus_conn, get_position};
+use crate::mpris::connection::{MprisError, find_best_active_service, get_dbus_conn, get_position};
 use crate::mpris::metadata::{TrackMetadata, extract_metadata};
 use crate::mpris::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
 
@@ -193,7 +197,16 @@ impl MprisEventHandler {
 
     /// Discover the active MPRIS player and switch to it if found.
     pub async fn discover_active_player(&mut self) -> Result<(), MprisError> {
-        match find_active_service(&self.block_list).await {
+        self.discover_active_player_with_hint(None).await
+    }
+
+    /// Discover the active MPRIS player with an optional preferred sender hint.
+    pub async fn discover_active_player_with_hint(
+        &mut self,
+        preferred_sender_unique: Option<&str>,
+    ) -> Result<(), MprisError> {
+        let curr = (!self.current_service.is_empty()).then_some(self.current_service.as_str());
+        match find_best_active_service(&self.block_list, curr, preferred_sender_unique).await {
             Ok(Some(service)) => {
                 if service != self.current_service {
                     self.switch_to_player(&service).await?;
@@ -266,10 +279,24 @@ impl MprisEventHandler {
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
         let mut name_owner_stream = dbus_proxy.receive_name_owner_changed().await?;
 
+        // Broker-level match rule for PropertiesChanged on /org/mpris/MediaPlayer2
+        let mpris_prop_rule = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.DBus.Properties")?
+            .member("PropertiesChanged")?
+            .path("/org/mpris/MediaPlayer2")?
+            .arg(0, "org.mpris.MediaPlayer2.Player")?
+            .build();
+        let mut global_prop_stream =
+            MessageStream::for_match_rule(mpris_prop_rule, &self.conn, None).await?;
+
         loop {
             if !self.current_service.is_empty() {
                 // Active player loop
-                if let Err(e) = self.run_active_player_loop(&mut name_owner_stream).await {
+                if let Err(e) = self
+                    .run_active_player_loop(&mut name_owner_stream, &mut global_prop_stream)
+                    .await
+                {
                     eprintln!("Error in active player loop: {e}");
                     self.deactivate_and_rediscover().await?;
                 }
@@ -313,6 +340,11 @@ impl MprisEventHandler {
                     } => {
                         let _ = self.discover_active_player().await;
                     }
+                    Some(Ok(msg)) = global_prop_stream.next() => {
+                        let header = msg.header();
+                        let sender_unique = header.sender().map(|u| u.as_str());
+                        let _ = self.discover_active_player_with_hint(sender_unique).await;
+                    }
                 }
             }
         }
@@ -322,6 +354,7 @@ impl MprisEventHandler {
     async fn run_active_player_loop(
         &mut self,
         name_owner_stream: &mut NameOwnerChangedStream,
+        global_prop_stream: &mut MessageStream,
     ) -> Result<(), MprisError> {
         let service = self.current_service.clone();
         let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
@@ -410,10 +443,22 @@ impl MprisEventHandler {
                             tracker.disarm();
                         }
                         self.emit(MprisEvent::StatusChange {
-                            playback_status: status,
+                            playback_status: status.clone(),
                             position,
                             rate,
                         });
+
+                        // If current player transitioned to Paused or Stopped, check if another player is currently Playing
+                        if status != "Playing"
+                            && let Ok(Some(ref best_service)) = find_best_active_service(
+                                &self.block_list,
+                                Some(&self.current_service),
+                                None,
+                            ).await
+                                && best_service != &self.current_service {
+                                    self.switch_to_player(best_service).await?;
+                                    return Ok(());
+                                }
                     }
                 }
 
@@ -469,7 +514,7 @@ impl MprisEventHandler {
                         futures_util::future::pending().await
                     }
                 } => {
-                    match find_active_service(&self.block_list).await {
+                    match find_best_active_service(&self.block_list, Some(&self.current_service), None).await {
                         Ok(Some(ref best_service)) if best_service == &self.current_service => {
                             // Same player remains active: do not tear down streams
                         }
@@ -500,7 +545,7 @@ impl MprisEventHandler {
                             self.deactivate_and_rediscover().await?;
                             return Ok(());
                         } else if is_mpris && owner_changed {
-                            match find_active_service(&self.block_list).await {
+                            match find_best_active_service(&self.block_list, Some(&self.current_service), None).await {
                                 Ok(Some(ref best_service)) if best_service != &self.current_service => {
                                     self.switch_to_player(best_service).await?;
                                     return Ok(());
@@ -513,6 +558,33 @@ impl MprisEventHandler {
                             }
                         }
                     }
+                }
+
+                // 7. Global MPRIS PropertiesChanged (cross-player transitions)
+                Some(Ok(msg)) = global_prop_stream.next() => {
+                    if let Ok((_iface, changed, _invalidated)) =
+                        msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+                        && let Some(val) = changed.get("PlaybackStatus") {
+                            let is_playing = match val.deref() {
+                                zvariant::Value::Str(s) => s.as_str() == "Playing",
+                                _ => false,
+                            };
+                            if is_playing {
+                                let header = msg.header();
+                                let sender_unique = header.sender().map(|u| u.as_str());
+                                match find_best_active_service(
+                                    &self.block_list,
+                                    Some(&self.current_service),
+                                    sender_unique,
+                                ).await {
+                                    Ok(Some(ref best_service)) if best_service != &self.current_service => {
+                                        self.switch_to_player(best_service).await?;
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                 }
             }
         }

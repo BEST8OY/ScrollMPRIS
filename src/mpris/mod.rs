@@ -7,7 +7,8 @@ pub mod proxies;
 
 #[allow(unused_imports)]
 pub use connection::{
-    MprisError, find_active_service, get_active_player_names, get_position, is_blocked,
+    MprisError, PlaybackPriority, find_active_service, find_best_active_service,
+    get_active_player_names, get_position, is_blocked,
 };
 #[allow(unused_imports)]
 pub use events::{CalibrationStepResult, MprisEvent, MprisEventHandler};
