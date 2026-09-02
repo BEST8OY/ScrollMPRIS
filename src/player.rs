@@ -68,12 +68,29 @@ impl PlayerState {
     pub fn update_playback_dbus(&mut self, playback_status: String, position: f64, rate: f64) {
         self.playing = playback_status == "Playing";
         self.status = playback_status;
-        self.last_position = position;
+        let current_pos = self.estimate_position();
+        let is_track_loop = self
+            .length
+            .is_some_and(|len| current_pos >= (len - 3.0).max(1.0));
+
+        // Guard: ignore 0.0s (or near-zero) position reports while playback is already active past 1.0s,
+        // avoiding retrograde desyncs from stale buffering events, UNLESS the track looped back to beginning.
+        let effective_position = if position <= 0.05 && !is_track_loop {
+            if current_pos > 1.0 {
+                current_pos
+            } else {
+                position
+            }
+        } else {
+            position
+        };
+
+        self.last_position = effective_position;
         self.last_update = Some(Instant::now());
-        self.position = position;
+        self.position = effective_position;
         self.rate = if rate > 0.0 { rate } else { 1.0 };
         // If playing with non-zero position, audio is already in steady-state playback
-        self.calibrated = self.playing && position > 0.0;
+        self.calibrated = self.playing && effective_position > 0.0;
     }
 
     pub fn estimate_position(&self) -> f64 {
@@ -110,10 +127,20 @@ impl PlayerState {
     /// Returns true if state was updated/calibrated.
     pub fn calibrate_position(&mut self, real_position: f64, threshold: f64) -> bool {
         if self.playing {
+            let current_pos = self.estimate_position();
+            let is_track_loop = self
+                .length
+                .is_some_and(|len| current_pos >= (len - 3.0).max(1.0));
+
+            // Guard against spurious near-zero position reports during active playback
+            if real_position <= 0.05 && !is_track_loop && current_pos > 1.0 {
+                return false;
+            }
+
             if !self.calibrated {
                 // Check if audio has started advancing from initial start position
                 let delta = (real_position - self.last_position).abs();
-                if delta >= threshold || real_position > 0.05 {
+                if delta >= threshold || real_position > 0.03 {
                     self.calibrated = true;
                     self.last_position = real_position;
                     self.last_update = Some(Instant::now());
@@ -126,8 +153,7 @@ impl PlayerState {
                 return false;
             }
 
-            let estimated = self.estimate_position();
-            let diff = (estimated - real_position).abs();
+            let diff = (current_pos - real_position).abs();
             if diff >= threshold {
                 self.last_position = real_position;
                 self.last_update = Some(Instant::now());
@@ -215,12 +241,61 @@ mod tests {
 
     #[test]
     fn test_force_calibrate() {
-        let mut state = PlayerState::default();
-        state.playing = true;
+        let mut state = PlayerState {
+            playing: true,
+            ..Default::default()
+        };
         assert!(!state.calibrated);
 
         state.force_calibrate();
         assert!(state.calibrated);
         assert!(state.last_update.is_some());
+    }
+
+    #[test]
+    fn test_update_playback_dbus_guards_spurious_zero_reset() {
+        let mut state = PlayerState {
+            length: Some(180.0),
+            ..Default::default()
+        };
+        state.update_playback_dbus("Playing".to_string(), 45.0, 1.0);
+        assert!(state.calibrated);
+        assert_eq!(state.last_position, 45.0);
+
+        // Transient buffering / D-Bus stutter reports 0.0s during mid-track playback
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        // Position must NOT reset to 0.0
+        assert!(state.last_position >= 45.0);
+        assert!(state.calibrated);
+    }
+
+    #[test]
+    fn test_update_playback_dbus_supports_track_loop() {
+        let mut state = PlayerState {
+            length: Some(180.0),
+            ..Default::default()
+        };
+        state.update_playback_dbus("Playing".to_string(), 178.5, 1.0);
+        assert!(state.calibrated);
+
+        // Song loops back to 0.0s near or past end of track
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        // Legitimate loop must be allowed
+        assert_eq!(state.last_position, 0.0);
+    }
+
+    #[test]
+    fn test_calibrate_position_guards_spurious_zero_reset() {
+        let mut state = PlayerState {
+            length: Some(200.0),
+            ..Default::default()
+        };
+        state.update_playback_dbus("Playing".to_string(), 30.0, 1.0);
+        assert!(state.calibrated);
+
+        // Spurious calibration tick with 0.0s should be ignored
+        let corrected = state.calibrate_position(0.0, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
+        assert!(!corrected);
+        assert!(state.estimate_position() >= 30.0);
     }
 }
