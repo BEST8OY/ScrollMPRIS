@@ -95,7 +95,13 @@ impl PlayerState {
         self.last_position = position;
         self.last_update = Some(Instant::now());
         self.position = position;
-        self.calibrated = false;
+        self.calibrated = position > 0.0;
+    }
+
+    /// Force playback calibration to active state (e.g. after transient calibration timeout).
+    pub fn force_calibrate(&mut self) {
+        self.calibrated = true;
+        self.last_update = Some(Instant::now());
     }
 
     /// Calibrate estimated position against authoritative player position.
@@ -188,5 +194,33 @@ mod tests {
         state.update_playback_dbus("Paused".to_string(), 5.0, 1.0);
         let corrected = state.calibrate_position(0.0, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
         assert!(!corrected);
+    }
+
+    #[test]
+    fn test_reset_position_cache_retains_calibration_for_positive_offset() {
+        let mut state = PlayerState::default();
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        assert!(!state.calibrated);
+
+        // Seeking to a non-zero position retains calibration
+        state.reset_position_cache(120.0);
+        assert!(state.calibrated);
+        assert_eq!(state.last_position, 120.0);
+
+        // Seeking to 0.0 uncalibrates for transient buffering hold
+        state.reset_position_cache(0.0);
+        assert!(!state.calibrated);
+        assert_eq!(state.last_position, 0.0);
+    }
+
+    #[test]
+    fn test_force_calibrate() {
+        let mut state = PlayerState::default();
+        state.playing = true;
+        assert!(!state.calibrated);
+
+        state.force_calibrate();
+        assert!(state.calibrated);
+        assert!(state.last_update.is_some());
     }
 }
