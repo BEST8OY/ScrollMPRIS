@@ -71,10 +71,16 @@ pub async fn find_active_service(block_list: &[String]) -> Result<Option<String>
 
 /// Check if a player service name should be blocked (case-insensitive substring match).
 pub fn is_blocked(service: &str, block_list: &[String]) -> bool {
-    let service_lower = service.to_lowercase();
-    block_list
-        .iter()
-        .any(|b| service_lower.contains(&b.to_lowercase()))
+    let s_bytes = service.as_bytes();
+    block_list.iter().any(|blocked| {
+        let b_bytes = blocked.as_bytes();
+        if b_bytes.is_empty() {
+            return false;
+        }
+        s_bytes
+            .windows(b_bytes.len())
+            .any(|window| window.eq_ignore_ascii_case(b_bytes))
+    })
 }
 
 /// Query current dynamic position directly using native uncached property proxy.
@@ -84,7 +90,7 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
     }
     let conn = get_dbus_conn().await?;
     let proxy = MediaPlayer2PlayerProxy::builder(&conn)
-        .destination(service.to_string())?
+        .destination(service)?
         .build()
         .await?;
 

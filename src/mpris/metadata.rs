@@ -160,7 +160,7 @@ pub async fn get_metadata(service: &str) -> Result<TrackMetadata, MprisError> {
     }
     let conn = get_dbus_conn().await?;
     let proxy = MediaPlayer2PlayerProxy::builder(&conn)
-        .destination(service.to_string())?
+        .destination(service)?
         .build()
         .await?;
 
