@@ -36,12 +36,6 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
             Some(trimmed.to_string())
         };
     }
-    if let Ok(vec) = <Vec<String>>::try_from(val.clone()) {
-        return vec
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .find(|s| !s.is_empty());
-    }
     match &**val {
         zvariant::Value::Str(s) => {
             let trimmed = s.as_str().trim();
@@ -52,23 +46,15 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
             }
         }
         zvariant::Value::Array(arr) => {
-            if let Ok(Some(first)) = arr.get::<String>(0) {
-                let trimmed = first.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
+            for elem in arr.iter() {
+                if let Ok(s) = <&str>::try_from(elem) {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
                 }
-            } else if let Ok(Some(first_str)) = arr.get::<&str>(0) {
-                let trimmed = first_str.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            } else {
-                None
             }
+            None
         }
         _ => None,
     }
@@ -82,19 +68,6 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
             None
         } else {
             Some(trimmed.to_string())
-        };
-    }
-    if let Ok(vec) = <Vec<String>>::try_from(val.clone()) {
-        let joined = vec
-            .into_iter()
-            .map(|a| a.trim().to_string())
-            .filter(|a| !a.is_empty())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return if joined.is_empty() {
-            None
-        } else {
-            Some(joined)
         };
     }
     match &**val {
@@ -111,13 +84,6 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
                 .iter()
                 .filter_map(|elem| {
                     if let Ok(s) = <&str>::try_from(elem) {
-                        let trimmed = s.trim();
-                        if !trimmed.is_empty() {
-                            Some(trimmed.to_string())
-                        } else {
-                            None
-                        }
-                    } else if let Ok(s) = <String>::try_from(elem.clone()) {
                         let trimmed = s.trim();
                         if !trimmed.is_empty() {
                             Some(trimmed.to_string())

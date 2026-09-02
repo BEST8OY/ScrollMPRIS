@@ -2,8 +2,9 @@
 
 use tokio::sync::OnceCell;
 use zbus::fdo::DBusProxy;
+use zbus::names::BusName;
 
-use crate::mpris::proxies::PlayerctldProxy;
+use crate::mpris::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
 
 /// Errors that can occur during MPRIS operations.
 #[derive(thiserror::Error, Debug)]
@@ -37,9 +38,14 @@ pub async fn get_dbus_conn() -> Result<zbus::Connection, MprisError> {
 /// Tier 2: Fallback to standard D-Bus daemon ListNames (for environments without playerctld).
 pub async fn get_active_player_names() -> Result<Vec<String>, MprisError> {
     let conn = get_dbus_conn().await?;
+    let dbus_proxy = DBusProxy::new(&conn).await?;
 
-    // Tier 1: Query playerctld
-    if let Ok(proxy) = PlayerctldProxy::new(&conn).await
+    // Tier 1: Query playerctld (check name_has_owner first to avoid unintended D-Bus autostart)
+    if dbus_proxy
+        .name_has_owner(BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap())
+        .await
+        .unwrap_or(false)
+        && let Ok(proxy) = PlayerctldProxy::new(&conn).await
         && let Ok(names) = proxy.player_names().await
         && !names.is_empty()
     {
@@ -47,7 +53,6 @@ pub async fn get_active_player_names() -> Result<Vec<String>, MprisError> {
     }
 
     // Tier 2: Fallback to D-Bus daemon ListNames
-    let dbus_proxy = DBusProxy::new(&conn).await?;
     let names = dbus_proxy.list_names().await?;
     let mpris_names: Vec<String> = names
         .into_iter()
@@ -72,36 +77,19 @@ pub fn is_blocked(service: &str, block_list: &[String]) -> bool {
         .any(|b| service_lower.contains(&b.to_lowercase()))
 }
 
-/// Query current dynamic position directly without proxy property caching.
+/// Query current dynamic position directly using native uncached property proxy.
 pub async fn get_position(service: &str) -> Result<f64, MprisError> {
     if service.is_empty() {
         return Ok(0.0);
     }
     let conn = get_dbus_conn().await?;
-    let dest = zbus::names::BusName::try_from(service.to_string())
-        .map_err(|e| MprisError::Fdo(zbus::fdo::Error::Failed(format!("Invalid bus name: {e}"))))?;
-
-    let msg = conn
-        .call_method(
-            Some(dest),
-            "/org/mpris/MediaPlayer2",
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &("org.mpris.MediaPlayer2.Player", "Position"),
-        )
+    let proxy = MediaPlayer2PlayerProxy::builder(&conn)
+        .destination(service.to_string())?
+        .build()
         .await?;
 
-    let body = msg.body().deserialize::<zvariant::OwnedValue>()?;
-
-    if let Ok(microseconds) = i64::try_from(body.clone()) {
-        Ok(microseconds as f64 / 1_000_000.0)
-    } else if let Ok(microseconds) = u64::try_from(body) {
-        Ok(microseconds as f64 / 1_000_000.0)
-    } else {
-        Err(MprisError::Fdo(zbus::fdo::Error::Failed(
-            "Invalid Position value".to_string(),
-        )))
-    }
+    let microsecs = proxy.position().await?;
+    Ok(microsecs as f64 / 1_000_000.0)
 }
 
 #[cfg(test)]

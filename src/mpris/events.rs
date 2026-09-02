@@ -4,6 +4,7 @@ use futures_util::StreamExt;
 use std::pin::Pin;
 use std::time::Duration;
 use zbus::fdo::{DBusProxy, NameOwnerChangedStream};
+use zbus::names::BusName;
 
 use crate::mpris::connection::{MprisError, find_active_service, get_dbus_conn, get_position};
 use crate::mpris::metadata::{TrackMetadata, extract_metadata};
@@ -240,7 +241,17 @@ impl MprisEventHandler {
                 }
             } else {
                 // Idle loop: 100% event-driven wait for NameOwnerChanged or playerctld signals (zero IPC polling)
-                let playerctld_proxy = PlayerctldProxy::new(&self.conn).await.ok();
+                let playerctld_proxy = if dbus_proxy
+                    .name_has_owner(
+                        BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap(),
+                    )
+                    .await
+                    .unwrap_or(false)
+                {
+                    PlayerctldProxy::new(&self.conn).await.ok()
+                } else {
+                    None
+                };
                 let mut playerctld_stream = if let Some(ref p) = playerctld_proxy {
                     Some(p.receive_player_names_changed().await)
                 } else {
@@ -289,8 +300,19 @@ impl MprisEventHandler {
         let mut metadata_stream = proxy.receive_metadata_changed().await;
         let mut rate_stream = proxy.receive_rate_changed().await;
 
-        // Subscribe to playerctld if available
-        let playerctld_proxy = PlayerctldProxy::new(&self.conn).await.ok();
+        // Subscribe to playerctld if available (checking ownership to prevent autostart)
+        let dbus_proxy = DBusProxy::new(&self.conn).await?;
+        let playerctld_proxy = if dbus_proxy
+            .name_has_owner(
+                BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap(),
+            )
+            .await
+            .unwrap_or(false)
+        {
+            PlayerctldProxy::new(&self.conn).await.ok()
+        } else {
+            None
+        };
         let mut playerctld_stream = if let Some(ref p) = playerctld_proxy {
             Some(p.receive_player_names_changed().await)
         } else {
@@ -298,7 +320,11 @@ impl MprisEventHandler {
         };
 
         // Initialize transient calibration tracker with authoritative player position
-        let initial_pos = get_position(&service).await.unwrap_or(0.0);
+        let initial_pos = proxy
+            .position()
+            .await
+            .map(|us| us as f64 / 1_000_000.0)
+            .unwrap_or(0.0);
         let mut tracker =
             CalibrationTracker::new(self.last_playback_status == "Playing", initial_pos);
 
@@ -307,8 +333,9 @@ impl MprisEventHandler {
                 // 0. Transient post-buffering position calibration for streaming players (e.g. Spotify)
                 _ = tracker.tick() => {
                     if self.last_playback_status == "Playing" && !self.current_service.is_empty() {
-                        match get_position(&self.current_service).await {
-                            Ok(real_pos) => {
+                        match proxy.position().await {
+                            Ok(microsecs) => {
+                                let real_pos = microsecs as f64 / 1_000_000.0;
                                 self.emit(MprisEvent::Calibrated { position: real_pos });
                                 if tracker.on_step(real_pos) == CalibrationStepResult::TimedOut {
                                     self.emit(MprisEvent::CalibrationTimeout);
@@ -339,7 +366,11 @@ impl MprisEventHandler {
                     let status = proxy.playback_status().await.unwrap_or_else(|_| "Stopped".to_string());
                     if status != self.last_playback_status {
                         self.last_playback_status = status.clone();
-                        let position = get_position(&self.current_service).await.unwrap_or(0.0);
+                        let position = proxy
+                            .position()
+                            .await
+                            .map(|us| us as f64 / 1_000_000.0)
+                            .unwrap_or(0.0);
                         let rate = proxy.rate().await.unwrap_or(1.0);
                         if status == "Playing" {
                             tracker.arm(position);
@@ -360,7 +391,11 @@ impl MprisEventHandler {
                         let new_track = extract_metadata(&map);
                         if new_track != self.last_track {
                             self.last_track = new_track.clone();
-                            let position = get_position(&self.current_service).await.unwrap_or(0.0);
+                            let position = proxy
+                                .position()
+                                .await
+                                .map(|us| us as f64 / 1_000_000.0)
+                                .unwrap_or(0.0);
                             let rate = proxy.rate().await.unwrap_or(1.0);
                             if self.last_playback_status == "Playing" {
                                 tracker.arm(position);
@@ -381,7 +416,11 @@ impl MprisEventHandler {
                 // 4. Playback rate changed
                 Some(_) = rate_stream.next() => {
                     let rate = proxy.rate().await.unwrap_or(1.0);
-                    let position = get_position(&self.current_service).await.unwrap_or(0.0);
+                    let position = proxy
+                        .position()
+                        .await
+                        .map(|us| us as f64 / 1_000_000.0)
+                        .unwrap_or(0.0);
                     self.emit(MprisEvent::StatusChange {
                         playback_status: self.last_playback_status.clone(),
                         position,

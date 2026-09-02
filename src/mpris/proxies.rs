@@ -19,6 +19,9 @@ pub trait MediaPlayer2Player {
     #[zbus(property)]
     fn rate(&self) -> zbus::Result<f64>;
 
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn position(&self) -> zbus::Result<i64>;
+
     #[zbus(signal)]
     fn seeked(&self, position: i64) -> zbus::Result<()>;
 }
