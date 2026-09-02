@@ -94,7 +94,8 @@ impl PlayerState {
     }
 
     pub fn estimate_position(&self) -> f64 {
-        if self.playing && self.calibrated
+        if self.playing
+            && self.calibrated
             && let Some(instant) = self.last_update
         {
             let elapsed = instant.elapsed().as_secs_f64() * self.rate;

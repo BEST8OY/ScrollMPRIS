@@ -96,7 +96,9 @@ impl CalibrationTracker {
             if !self.confirmed {
                 // Audio started advancing; schedule 1 final confirmation check to lock in steady-state sync
                 self.confirmed = true;
-                self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_CONFIRMATION_INTERVAL)));
+                self.timer = Some(Box::pin(tokio::time::sleep(
+                    CALIBRATION_CONFIRMATION_INTERVAL,
+                )));
                 CalibrationStepResult::Continue
             } else {
                 // Steady-state verified: disarm calibration for the remainder of this track
@@ -335,9 +337,7 @@ impl MprisEventHandler {
         // Subscribe to playerctld if available (checking ownership to prevent autostart)
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
         let playerctld_proxy = if dbus_proxy
-            .name_has_owner(
-                BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap(),
-            )
+            .name_has_owner(BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap())
             .await
             .unwrap_or(false)
         {
