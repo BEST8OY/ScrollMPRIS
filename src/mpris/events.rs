@@ -15,6 +15,14 @@ pub const CALIBRATION_POLL_INTERVAL: Duration = Duration::from_millis(800);
 pub const MAX_CALIBRATION_ATTEMPTS: u8 = 15;
 pub const MOVEMENT_DELTA_THRESHOLD_SECS: f64 = 0.08;
 
+/// Result of stepping the calibration state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalibrationStepResult {
+    Continue,
+    Confirmed,
+    TimedOut,
+}
+
 /// Transient calibration state machine for detecting when a player actually starts
 /// advancing audio position after buffering.
 #[derive(Debug)]
@@ -60,7 +68,7 @@ impl CalibrationTracker {
     }
 
     /// Step the calibration state machine given the newly fetched authoritative position.
-    fn on_step(&mut self, real_pos: f64) {
+    fn on_step(&mut self, real_pos: f64) -> CalibrationStepResult {
         self.attempts += 1;
         let moved = (real_pos - self.anchor_pos).abs() > MOVEMENT_DELTA_THRESHOLD_SECS;
 
@@ -69,32 +77,51 @@ impl CalibrationTracker {
                 // Audio started advancing; schedule 1 final confirmation check to lock in steady-state sync
                 self.confirmed = true;
                 self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_POLL_INTERVAL)));
+                CalibrationStepResult::Continue
             } else {
                 // Steady-state verified: disarm calibration for the remainder of this track
                 self.disarm();
+                CalibrationStepResult::Confirmed
             }
         } else if self.attempts < MAX_CALIBRATION_ATTEMPTS {
             // Still buffering (real_pos unchanged from anchor); retry
             self.timer = Some(Box::pin(tokio::time::sleep(CALIBRATION_POLL_INTERVAL)));
+            CalibrationStepResult::Continue
         } else {
             // Reached maximum attempts (slow network timeout): disarm
             self.disarm();
+            CalibrationStepResult::TimedOut
         }
     }
 }
 
+/// Events emitted by the MPRIS event handler to the main actor.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MprisEvent {
+    TrackChange {
+        metadata: TrackMetadata,
+        service: String,
+        position: f64,
+        playback_status: String,
+        rate: f64,
+    },
+    StatusChange {
+        playback_status: String,
+        position: f64,
+        rate: f64,
+    },
+    Seeked {
+        position: f64,
+    },
+    Calibrated {
+        position: f64,
+    },
+    CalibrationTimeout,
+}
+
 /// Event handler managing MPRIS signals, player discovery, and lifecycle monitoring.
-pub struct MprisEventHandler<F, G, H, I>
-where
-    F: FnMut(TrackMetadata, String, f64, String, f64) + Send + 'static,
-    G: FnMut(String, f64, f64) + Send + 'static,
-    H: FnMut(f64) + Send + 'static,
-    I: FnMut(f64) + Send + 'static,
-{
-    on_track_change: F,
-    on_status_change: G,
-    on_seek: H,
-    on_calibrate: I,
+pub struct MprisEventHandler {
+    event_tx: tokio::sync::mpsc::Sender<MprisEvent>,
     block_list: Vec<String>,
     current_service: String,
     last_track: TrackMetadata,
@@ -102,28 +129,16 @@ where
     conn: zbus::Connection,
 }
 
-impl<F, G, H, I> MprisEventHandler<F, G, H, I>
-where
-    F: FnMut(TrackMetadata, String, f64, String, f64) + Send + 'static,
-    G: FnMut(String, f64, f64) + Send + 'static,
-    H: FnMut(f64) + Send + 'static,
-    I: FnMut(f64) + Send + 'static,
-{
+impl MprisEventHandler {
     /// Create a new MPRIS event handler.
     pub async fn new(
-        on_track_change: F,
-        on_status_change: G,
-        on_seek: H,
-        on_calibrate: I,
+        event_tx: tokio::sync::mpsc::Sender<MprisEvent>,
         block_list: Vec<String>,
     ) -> Result<Self, MprisError> {
         let conn = get_dbus_conn().await?;
 
         let mut handler = Self {
-            on_track_change,
-            on_status_change,
-            on_seek,
-            on_calibrate,
+            event_tx,
             block_list,
             current_service: String::new(),
             last_track: TrackMetadata::default(),
@@ -135,6 +150,10 @@ where
         let _ = handler.discover_active_player().await;
 
         Ok(handler)
+    }
+
+    fn emit(&self, event: MprisEvent) {
+        let _ = self.event_tx.try_send(event);
     }
 
     /// Discover the active MPRIS player and switch to it if found.
@@ -175,7 +194,13 @@ where
         self.last_track = meta.clone();
         self.last_playback_status = playback_status.clone();
 
-        (self.on_track_change)(meta, service.to_string(), position, playback_status, rate);
+        self.emit(MprisEvent::TrackChange {
+            metadata: meta,
+            service: service.to_string(),
+            position,
+            playback_status,
+            rate,
+        });
         Ok(())
     }
 
@@ -185,13 +210,13 @@ where
         self.last_track = TrackMetadata::default();
         self.last_playback_status.clear();
 
-        (self.on_track_change)(
-            TrackMetadata::default(),
-            String::new(),
-            0.0,
-            String::new(),
-            1.0,
-        );
+        self.emit(MprisEvent::TrackChange {
+            metadata: TrackMetadata::default(),
+            service: String::new(),
+            position: 0.0,
+            playback_status: String::new(),
+            rate: 1.0,
+        });
     }
 
     /// Deactivate current player and immediately attempt re-discovery.
@@ -264,9 +289,19 @@ where
                 // 0. Transient post-buffering position calibration for streaming players (e.g. Spotify)
                 _ = tracker.tick() => {
                     if self.last_playback_status == "Playing" && !self.current_service.is_empty() {
-                        let real_pos = get_position(&self.current_service).await.unwrap_or(0.0);
-                        (self.on_calibrate)(real_pos);
-                        tracker.on_step(real_pos);
+                        match get_position(&self.current_service).await {
+                            Ok(real_pos) => {
+                                self.emit(MprisEvent::Calibrated { position: real_pos });
+                                if tracker.on_step(real_pos) == CalibrationStepResult::TimedOut {
+                                    self.emit(MprisEvent::CalibrationTimeout);
+                                }
+                            }
+                            Err(_) => {
+                                if tracker.on_step(tracker.anchor_pos) == CalibrationStepResult::TimedOut {
+                                    self.emit(MprisEvent::CalibrationTimeout);
+                                }
+                            }
+                        }
                     } else {
                         tracker.disarm();
                     }
@@ -277,7 +312,7 @@ where
                     if let Ok(args) = signal.args() {
                         let pos_sec = args.position as f64 / 1_000_000.0;
                         tracker.arm(pos_sec);
-                        (self.on_seek)(pos_sec);
+                        self.emit(MprisEvent::Seeked { position: pos_sec });
                     }
                 }
 
@@ -293,11 +328,11 @@ where
                         } else {
                             tracker.disarm();
                         }
-                        (self.on_status_change)(
-                            status,
+                        self.emit(MprisEvent::StatusChange {
+                            playback_status: status,
                             position,
                             rate,
-                        );
+                        });
                     }
                 }
 
@@ -314,13 +349,13 @@ where
                             } else {
                                 tracker.disarm();
                             }
-                            (self.on_track_change)(
-                                new_track,
-                                self.current_service.clone(),
+                            self.emit(MprisEvent::TrackChange {
+                                metadata: new_track,
+                                service: self.current_service.clone(),
                                 position,
-                                self.last_playback_status.clone(),
+                                playback_status: self.last_playback_status.clone(),
                                 rate,
-                            );
+                            });
                         }
                     }
                 }
@@ -329,11 +364,11 @@ where
                 Some(_) = rate_stream.next() => {
                     let rate = proxy.rate().await.unwrap_or(1.0);
                     let position = get_position(&self.current_service).await.unwrap_or(0.0);
-                    (self.on_status_change)(
-                        self.last_playback_status.clone(),
+                    self.emit(MprisEvent::StatusChange {
+                        playback_status: self.last_playback_status.clone(),
                         position,
                         rate,
-                    );
+                    });
                 }
 
 
@@ -419,25 +454,25 @@ mod tests {
         let mut tracker = CalibrationTracker::new(true, 0.0);
 
         // Step 1: Still buffering at 0.0s
-        tracker.on_step(0.0);
+        assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Continue);
         assert_eq!(tracker.attempts, 1);
         assert!(!tracker.confirmed);
         assert!(tracker.timer.is_some());
 
         // Step 2: Still buffering at 0.0s
-        tracker.on_step(0.0);
+        assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Continue);
         assert_eq!(tracker.attempts, 2);
         assert!(!tracker.confirmed);
         assert!(tracker.timer.is_some());
 
         // Step 3: Audio starts playing (moved past delta threshold)
-        tracker.on_step(0.4);
+        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Continue);
         assert_eq!(tracker.attempts, 3);
         assert!(tracker.confirmed);
         assert!(tracker.timer.is_some()); // Armed for final confirmation
 
         // Step 4: Final confirmation step verifies continuous playback
-        tracker.on_step(1.6);
+        assert_eq!(tracker.on_step(1.6), CalibrationStepResult::Confirmed);
         assert_eq!(tracker.attempts, 4);
         assert!(tracker.timer.is_none()); // Disarmed!
     }
@@ -447,18 +482,18 @@ mod tests {
         let mut tracker = CalibrationTracker::new(true, 45.0);
 
         // Step 1: Mid-track buffering (authoritative pos still 45.0)
-        tracker.on_step(45.0);
+        assert_eq!(tracker.on_step(45.0), CalibrationStepResult::Continue);
         assert_eq!(tracker.attempts, 1);
         assert!(!tracker.confirmed);
         assert!(tracker.timer.is_some());
 
         // Step 2: Resumed playback moves to 45.3s (delta 0.3 > 0.2)
-        tracker.on_step(45.3);
+        assert_eq!(tracker.on_step(45.3), CalibrationStepResult::Continue);
         assert!(tracker.confirmed);
         assert!(tracker.timer.is_some());
 
         // Step 3: Steady-state confirmation
-        tracker.on_step(46.5);
+        assert_eq!(tracker.on_step(46.5), CalibrationStepResult::Confirmed);
         assert!(tracker.timer.is_none()); // Disarmed
     }
 
@@ -466,10 +501,12 @@ mod tests {
     async fn test_tracker_max_attempts_timeout() {
         let mut tracker = CalibrationTracker::new(true, 0.0);
         for i in 1..=MAX_CALIBRATION_ATTEMPTS {
-            tracker.on_step(0.0);
+            let res = tracker.on_step(0.0);
             if i < MAX_CALIBRATION_ATTEMPTS {
+                assert_eq!(res, CalibrationStepResult::Continue);
                 assert!(tracker.timer.is_some());
             } else {
+                assert_eq!(res, CalibrationStepResult::TimedOut);
                 assert!(tracker.timer.is_none()); // Disarmed after max attempts
             }
         }

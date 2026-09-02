@@ -1,9 +1,8 @@
 use std::fs;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ScrollMPRIS::config::Config;
-use ScrollMPRIS::mpris::events::MprisEventHandler;
+use ScrollMPRIS::mpris::events::{MprisEvent, MprisEventHandler};
 use ScrollMPRIS::player::{DEFAULT_CALIBRATION_DRIFT_THRESHOLD, PlayerState};
 use ScrollMPRIS::utils::{ScrollStateMap, print_status};
 use anyhow::Result;
@@ -14,8 +13,8 @@ async fn main() -> Result<()> {
     let config = Config::parse();
     let mut scroll_states = ScrollStateMap::new();
     let mut last_output = String::new();
-    let player_state = Arc::new(Mutex::new(PlayerState::default()));
-    let (tx, mut rx) = mpsc::channel(16);
+    let mut player_state = PlayerState::default();
+    let (tx, mut rx) = mpsc::channel::<MprisEvent>(32);
     let block_list = config.blocked.clone();
 
     // Write PID
@@ -31,50 +30,15 @@ async fn main() -> Result<()> {
 
     // Spawn MPRIS event handler
     {
-        let player_state = player_state.clone();
         let tx = tx.clone();
         let block_list = block_list.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_millis(500);
             loop {
-                let player_state1 = player_state.clone();
-                let tx1 = tx.clone();
-                let player_state2 = player_state.clone();
-                let tx2 = tx.clone();
-                let player_state3 = player_state.clone();
-                let tx3 = tx.clone();
-                let player_state4 = player_state.clone();
-                let tx4 = tx.clone();
+                let tx = tx.clone();
                 let block_list = block_list.clone();
 
-                match MprisEventHandler::new(
-                    move |meta, service, pos, playback_status, rate| {
-                        let mut state = player_state1.lock().unwrap();
-                        state.update_from_metadata(&meta);
-                        state.set_service(&service);
-                        state.update_playback_dbus(playback_status, pos, rate);
-                        let _ = tx1.try_send(());
-                    },
-                    move |playback_status, pos, rate| {
-                        let mut state = player_state2.lock().unwrap();
-                        state.update_playback_dbus(playback_status, pos, rate);
-                        let _ = tx2.try_send(());
-                    },
-                    move |pos| {
-                        let mut state = player_state3.lock().unwrap();
-                        state.reset_position_cache(pos);
-                        let _ = tx3.try_send(());
-                    },
-                    move |real_pos| {
-                        let mut state = player_state4.lock().unwrap();
-                        if state.calibrate_position(real_pos, DEFAULT_CALIBRATION_DRIFT_THRESHOLD) {
-                            let _ = tx4.try_send(());
-                        }
-                    },
-                    block_list,
-                )
-                .await
-                {
+                match MprisEventHandler::new(tx, block_list).await {
                     Ok(mut event_handler) => {
                         let start = std::time::Instant::now();
                         if let Err(e) = event_handler.handle_events().await {
@@ -103,32 +67,46 @@ async fn main() -> Result<()> {
     let mut last_scroll = std::time::Instant::now();
 
     // Emit initial status (e.g. stopped) so Waybar immediately receives state
-    {
-        let mut state = player_state.lock().unwrap();
-        print_status(
-            &config,
-            &mut state,
-            &mut scroll_states,
-            &mut last_output,
-            false,
-        );
-    }
+    print_status(
+        &config,
+        &mut player_state,
+        &mut scroll_states,
+        &mut last_output,
+        false,
+    );
 
     loop {
         tokio::select! {
-            Some(_) = rx.recv() => {
-                let mut state = player_state.lock().unwrap();
+            Some(event) = rx.recv() => {
+                match event {
+                    MprisEvent::TrackChange { metadata, service, position, playback_status, rate } => {
+                        player_state.update_from_metadata(&metadata);
+                        player_state.set_service(&service);
+                        player_state.update_playback_dbus(playback_status, position, rate);
+                    }
+                    MprisEvent::StatusChange { playback_status, position, rate } => {
+                        player_state.update_playback_dbus(playback_status, position, rate);
+                    }
+                    MprisEvent::Seeked { position } => {
+                        player_state.reset_position_cache(position);
+                    }
+                    MprisEvent::Calibrated { position } => {
+                        player_state.calibrate_position(position, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
+                    }
+                    MprisEvent::CalibrationTimeout => {
+                        player_state.force_calibrate();
+                    }
+                }
                 print_status(
                     &config,
-                    &mut state,
+                    &mut player_state,
                     &mut scroll_states,
                     &mut last_output,
                     false,
                 );
             }
             _ = ticker.tick() => {
-                let mut state = player_state.lock().unwrap();
-                if state.playing {
+                if player_state.playing {
                     let now = std::time::Instant::now();
                     let should_advance = now.duration_since(last_scroll) >= Duration::from_millis(config.delay);
                     if should_advance {
@@ -136,7 +114,7 @@ async fn main() -> Result<()> {
                     }
                     print_status(
                         &config,
-                        &mut state,
+                        &mut player_state,
                         &mut scroll_states,
                         &mut last_output,
                         should_advance,
