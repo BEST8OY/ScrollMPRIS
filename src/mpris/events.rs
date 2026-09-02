@@ -239,16 +239,34 @@ impl MprisEventHandler {
                     self.deactivate_and_rediscover().await?;
                 }
             } else {
-                // Idle loop: 100% event-driven wait for NameOwnerChanged signals (zero IPC polling)
-                if let Some(signal) = name_owner_stream.next().await {
-                    if let Ok(args) = signal.args() {
-                        let name = args.name.as_str();
-                        let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
-                        let old_owner = args.old_owner.as_deref().unwrap_or("");
-                        let new_owner = args.new_owner.as_deref().unwrap_or("");
-                        if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
-                            let _ = self.discover_active_player().await;
+                // Idle loop: 100% event-driven wait for NameOwnerChanged or playerctld signals (zero IPC polling)
+                let playerctld_proxy = PlayerctldProxy::new(&self.conn).await.ok();
+                let mut playerctld_stream = if let Some(ref p) = playerctld_proxy {
+                    Some(p.receive_player_names_changed().await)
+                } else {
+                    None
+                };
+
+                tokio::select! {
+                    Some(signal) = name_owner_stream.next() => {
+                        if let Ok(args) = signal.args() {
+                            let name = args.name.as_str();
+                            let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
+                            let old_owner = args.old_owner.as_deref().unwrap_or("");
+                            let new_owner = args.new_owner.as_deref().unwrap_or("");
+                            if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
+                                let _ = self.discover_active_player().await;
+                            }
                         }
+                    }
+                    Some(_) = async {
+                        if let Some(ref mut s) = playerctld_stream {
+                            s.next().await
+                        } else {
+                            futures_util::future::pending().await
+                        }
+                    } => {
+                        let _ = self.discover_active_player().await;
                     }
                 }
             }
