@@ -369,6 +369,16 @@ impl MprisEventHandler {
 
         // Subscribe to playerctld if available (checking ownership to prevent autostart)
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
+        let current_unique_name: Option<String> =
+            if let Ok(bus_name) = zbus::names::BusName::try_from(service.as_str()) {
+                dbus_proxy
+                    .get_name_owner(bus_name)
+                    .await
+                    .ok()
+                    .map(|u| u.to_string())
+            } else {
+                None
+            };
         let playerctld_proxy = if dbus_proxy
             .name_has_owner(BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap())
             .await
@@ -448,8 +458,8 @@ impl MprisEventHandler {
                             rate,
                         });
 
-                        // If current player transitioned to Paused or Stopped, check if another player is currently Playing
-                        if status != "Playing"
+                        // If current player transitioned to Stopped, check if another player is currently Playing
+                        if status == "Stopped"
                             && let Ok(Some(ref best_service)) = find_best_active_service(
                                 &self.block_list,
                                 Some(&self.current_service),
@@ -572,6 +582,15 @@ impl MprisEventHandler {
                             if is_playing {
                                 let header = msg.header();
                                 let sender_unique = header.sender().map(|u| u.as_str());
+
+                                // Skip self: If this signal was emitted by the currently monitored player,
+                                // our dedicated status_stream already handles it. Avoid redundant whole-bus scans.
+                                if let Some(ref cur_u) = current_unique_name
+                                    && sender_unique == Some(cur_u.as_str())
+                                {
+                                    continue;
+                                }
+
                                 match find_best_active_service(
                                     &self.block_list,
                                     Some(&self.current_service),

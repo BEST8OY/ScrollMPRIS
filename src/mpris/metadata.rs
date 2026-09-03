@@ -45,6 +45,14 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
                 Some(trimmed.to_string())
             }
         }
+        zvariant::Value::ObjectPath(p) => {
+            let trimmed = p.as_str().trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
         zvariant::Value::Array(arr) => {
             for elem in arr.iter() {
                 if let Ok(s) = <&str>::try_from(elem) {
@@ -305,5 +313,22 @@ mod tests {
 
         let meta = extract_metadata(&map);
         assert_eq!(meta, TrackMetadata::default());
+    }
+
+    #[test]
+    fn test_extract_string_or_first_item_object_path() {
+        let op = zvariant::ObjectPath::try_from("/org/mpris/MediaPlayer2/Track/1").unwrap();
+        let val = OwnedValue::try_from(Value::ObjectPath(op)).unwrap();
+        assert_eq!(
+            extract_string_or_first_item(&val),
+            Some("/org/mpris/MediaPlayer2/Track/1".to_string())
+        );
+
+        let empty_op = zvariant::ObjectPath::try_from("/").unwrap();
+        let val_empty = OwnedValue::try_from(Value::ObjectPath(empty_op)).unwrap();
+        assert_eq!(
+            extract_string_or_first_item(&val_empty),
+            Some("/".to_string())
+        );
     }
 }

@@ -1,10 +1,11 @@
 //! D-Bus connection management and player discovery for MPRIS.
 
+use super::proxies::PlayerctldProxy;
+use std::ops::Deref;
 use tokio::sync::OnceCell;
 use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
-
-use crate::mpris::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
+use zvariant::OwnedValue;
 
 /// Errors that can occur during MPRIS operations.
 #[derive(thiserror::Error, Debug)]
@@ -88,14 +89,22 @@ impl PlaybackPriority {
 /// Probe a player's PlaybackStatus with a short timeout to prevent slow or wedged players from hanging.
 pub async fn query_player_priority(conn: &zbus::Connection, service: &str) -> PlaybackPriority {
     let query = async {
-        let proxy = MediaPlayer2PlayerProxy::builder(conn)
-            .destination(service)
-            .ok()?
-            .build()
+        let reply = conn
+            .call_method(
+                Some(service),
+                "/org/mpris/MediaPlayer2",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
+            )
             .await
             .ok()?;
-        let status = proxy.playback_status().await.ok()?;
-        Some(PlaybackPriority::from_status_str(&status))
+        let val: OwnedValue = reply.body().deserialize().ok()?;
+        let status = match val.deref() {
+            zvariant::Value::Str(s) => s.as_str(),
+            _ => return None,
+        };
+        Some(PlaybackPriority::from_status_str(status))
     };
 
     tokio::time::timeout(std::time::Duration::from_millis(50), query)
@@ -211,18 +220,33 @@ pub fn is_blocked(service: &str, block_list: &[String]) -> bool {
     })
 }
 
-/// Query current dynamic position directly using native uncached property proxy.
+/// Query current dynamic position directly using direct D-Bus `Properties.Get`
+/// to bypass proxy caches and eliminate proxy construction overhead.
 pub async fn get_position(service: &str) -> Result<f64, MprisError> {
     if service.is_empty() {
         return Ok(0.0);
     }
     let conn = get_dbus_conn().await?;
-    let proxy = MediaPlayer2PlayerProxy::builder(&conn)
-        .destination(service)?
-        .build()
+    let reply = conn
+        .call_method(
+            Some(service),
+            "/org/mpris/MediaPlayer2",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.mpris.MediaPlayer2.Player", "Position"),
+        )
         .await?;
 
-    let microsecs = proxy.position().await?;
+    let val: OwnedValue = reply.body().deserialize()?;
+    let microsecs = match val.deref() {
+        zvariant::Value::I64(v) => *v,
+        _ => {
+            return Err(MprisError::ZBus(zbus::Error::Failure(
+                "Unexpected Position property type from MPRIS player".into(),
+            )));
+        }
+    };
+
     Ok(microsecs as f64 / 1_000_000.0)
 }
 
