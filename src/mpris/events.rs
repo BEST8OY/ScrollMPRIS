@@ -319,31 +319,38 @@ impl MprisEventHandler {
                     None
                 };
 
-                tokio::select! {
-                    Some(signal) = name_owner_stream.next() => {
-                        if let Ok(args) = signal.args() {
-                            let name = args.name.as_str();
-                            let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
-                            let old_owner = args.old_owner.as_deref().unwrap_or("");
-                            let new_owner = args.new_owner.as_deref().unwrap_or("");
-                            if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
-                                let _ = self.discover_active_player().await;
+                while self.current_service.is_empty() {
+                    tokio::select! {
+                        Some(signal) = name_owner_stream.next() => {
+                            if let Ok(args) = signal.args() {
+                                let name = args.name.as_str();
+                                let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
+                                let old_owner = args.old_owner.as_deref().unwrap_or("");
+                                let new_owner = args.new_owner.as_deref().unwrap_or("");
+                                if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
+                                    let _ = self.discover_active_player().await;
+                                }
                             }
                         }
-                    }
-                    Some(_) = async {
-                        if let Some(ref mut s) = playerctld_stream {
-                            s.next().await
-                        } else {
-                            futures_util::future::pending().await
+                        Some(_) = async {
+                            if let Some(ref mut s) = playerctld_stream {
+                                s.next().await
+                            } else {
+                                futures_util::future::pending().await
+                            }
+                        } => {
+                            let _ = self.discover_active_player().await;
                         }
-                    } => {
-                        let _ = self.discover_active_player().await;
-                    }
-                    Some(Ok(msg)) = global_prop_stream.next() => {
-                        let header = msg.header();
-                        let sender_unique = header.sender().map(|u| u.as_str());
-                        let _ = self.discover_active_player_with_hint(sender_unique).await;
+                        Some(Ok(msg)) = global_prop_stream.next() => {
+                            if let Ok((_iface, changed, _invalidated)) =
+                                msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+                                && (changed.contains_key("PlaybackStatus") || changed.contains_key("Metadata"))
+                            {
+                                let header = msg.header();
+                                let sender_unique = header.sender().map(|u| u.as_str());
+                                let _ = self.discover_active_player_with_hint(sender_unique).await;
+                            }
+                        }
                     }
                 }
             }
@@ -431,14 +438,18 @@ impl MprisEventHandler {
                 Some(signal) = seeked_stream.next() => {
                     if let Ok(args) = signal.args() {
                         let pos_sec = args.position as f64 / 1_000_000.0;
-                        tracker.arm(pos_sec);
+                        if self.last_playback_status == "Playing" {
+                            tracker.arm(pos_sec);
+                        } else {
+                            tracker.disarm();
+                        }
                         self.emit(MprisEvent::Seeked { position: pos_sec });
                     }
                 }
 
                 // 2. Playback status changed
                 Some(_) = status_stream.next() => {
-                    let status = proxy.playback_status().await.unwrap_or_else(|_| "Stopped".to_string());
+                    let status = proxy.playback_status().await?;
                     if status != self.last_playback_status {
                         self.last_playback_status = status.clone();
                         let position = proxy

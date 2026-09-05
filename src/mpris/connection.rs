@@ -16,6 +16,8 @@ pub enum MprisError {
     Fdo(#[from] zbus::fdo::Error),
     #[error("No connection to D-Bus: {0}")]
     NoConnection(zbus::Error),
+    #[error("D-Bus operation timed out")]
+    Timeout,
 }
 
 /// Global D-Bus connection singleton
@@ -46,11 +48,18 @@ pub async fn get_active_player_names() -> Result<Vec<String>, MprisError> {
         .name_has_owner(BusName::from_static_str("org.mpris.MediaPlayer2.playerctld").unwrap())
         .await
         .unwrap_or(false)
-        && let Ok(proxy) = PlayerctldProxy::new(&conn).await
-        && let Ok(names) = proxy.player_names().await
-        && !names.is_empty()
     {
-        return Ok(names);
+        let playerctld_proxy = PlayerctldProxy::builder(&conn)
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await;
+
+        if let Ok(proxy) = playerctld_proxy
+            && let Ok(names) = proxy.player_names().await
+            && !names.is_empty()
+        {
+            return Ok(names);
+        }
     }
 
     // Tier 2: Fallback to D-Bus daemon ListNames
@@ -147,7 +156,9 @@ pub async fn find_best_active_service(
         let dbus_proxy = &dbus_proxy;
         async move {
             let priority = query_player_priority(&conn, svc).await;
-            let is_preferred = if let Some(target_unique) = preferred_sender_unique {
+            let is_preferred = if let Some(target_unique) = preferred_sender_unique
+                && priority == PlaybackPriority::Playing
+            {
                 if let Ok(bus_name) = BusName::try_from(svc.as_str()) {
                     dbus_proxy
                         .get_name_owner(bus_name)
@@ -206,19 +217,27 @@ pub async fn find_active_service(block_list: &[String]) -> Result<Option<String>
     find_best_active_service(block_list, None, None).await
 }
 
+/// Case-insensitive ASCII substring search helper.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let h_bytes = haystack.as_bytes();
+    let n_bytes = needle.as_bytes();
+    if n_bytes.is_empty() {
+        return false;
+    }
+    h_bytes
+        .windows(n_bytes.len())
+        .any(|window| window.eq_ignore_ascii_case(n_bytes))
+}
+
 /// Check if a player service name should be blocked (case-insensitive substring match).
 pub fn is_blocked(service: &str, block_list: &[String]) -> bool {
-    let s_bytes = service.as_bytes();
-    block_list.iter().any(|blocked| {
-        let b_bytes = blocked.as_bytes();
-        if b_bytes.is_empty() {
-            return false;
-        }
-        s_bytes
-            .windows(b_bytes.len())
-            .any(|window| window.eq_ignore_ascii_case(b_bytes))
-    })
+    block_list
+        .iter()
+        .any(|blocked| contains_ignore_ascii_case(service, blocked))
 }
+
+/// Timeout applied to dynamic D-Bus queries to prevent frozen players from blocking the caller.
+const DBUS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Query current dynamic position directly using direct D-Bus `Properties.Get`
 /// to bypass proxy caches and eliminate proxy construction overhead.
@@ -227,27 +246,34 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
         return Ok(0.0);
     }
     let conn = get_dbus_conn().await?;
-    let reply = conn
-        .call_method(
-            Some(service),
-            "/org/mpris/MediaPlayer2",
-            Some("org.freedesktop.DBus.Properties"),
-            "Get",
-            &("org.mpris.MediaPlayer2.Player", "Position"),
-        )
-        .await?;
+    let query = async {
+        let reply = conn
+            .call_method(
+                Some(service),
+                "/org/mpris/MediaPlayer2",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.mpris.MediaPlayer2.Player", "Position"),
+            )
+            .await?;
 
-    let val: OwnedValue = reply.body().deserialize()?;
-    let microsecs = match val.deref() {
-        zvariant::Value::I64(v) => *v,
-        _ => {
-            return Err(MprisError::ZBus(zbus::Error::Failure(
-                "Unexpected Position property type from MPRIS player".into(),
-            )));
-        }
+        let val: OwnedValue = reply.body().deserialize()?;
+        let microsecs = match val.deref() {
+            zvariant::Value::I64(v) => *v,
+            zvariant::Value::U64(v) => *v as i64,
+            _ => {
+                return Err(MprisError::ZBus(zbus::Error::Failure(
+                    "Unexpected Position property type from MPRIS player".into(),
+                )));
+            }
+        };
+
+        Ok(microsecs as f64 / 1_000_000.0)
     };
 
-    Ok(microsecs as f64 / 1_000_000.0)
+    tokio::time::timeout(DBUS_QUERY_TIMEOUT, query)
+        .await
+        .map_err(|_| MprisError::Timeout)?
 }
 
 #[cfg(test)]
@@ -281,6 +307,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_position_invalid_bus_name() {
         assert!(get_position("invalid name with spaces").await.is_err());
+    }
+
+    #[test]
+    fn test_mpris_error_timeout_display() {
+        let err = MprisError::Timeout;
+        assert_eq!(err.to_string(), "D-Bus operation timed out");
     }
 
     #[test]
