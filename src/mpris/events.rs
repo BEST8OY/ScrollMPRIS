@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::time::Duration;
-use zbus::fdo::{DBusProxy, NameOwnerChangedStream};
+use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
 use zbus::{MatchRule, MessageStream};
 use zvariant::OwnedValue;
@@ -277,7 +277,16 @@ impl MprisEventHandler {
     /// Main event loop: watches D-Bus NameOwnerChanged, playerctld changes, and player signals.
     pub async fn handle_events(&mut self) -> Result<(), MprisError> {
         let dbus_proxy = DBusProxy::new(&self.conn).await?;
-        let mut name_owner_stream = dbus_proxy.receive_name_owner_changed().await?;
+
+        // Broker-level match rule for NameOwnerChanged filtered to org.mpris.MediaPlayer2.*
+        let mpris_name_rule = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.DBus")?
+            .member("NameOwnerChanged")?
+            .arg0ns("org.mpris.MediaPlayer2")?
+            .build();
+        let mut name_owner_stream =
+            MessageStream::for_match_rule(mpris_name_rule, &self.conn, None).await?;
 
         // Broker-level match rule for PropertiesChanged on /org/mpris/MediaPlayer2
         let mpris_prop_rule = MatchRule::builder()
@@ -321,15 +330,15 @@ impl MprisEventHandler {
 
                 while self.current_service.is_empty() {
                     tokio::select! {
-                        Some(signal) = name_owner_stream.next() => {
-                            if let Ok(args) = signal.args() {
-                                let name = args.name.as_str();
-                                let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
-                                let old_owner = args.old_owner.as_deref().unwrap_or("");
-                                let new_owner = args.new_owner.as_deref().unwrap_or("");
-                                if is_mpris && old_owner != new_owner && !new_owner.is_empty() {
-                                    let _ = self.discover_active_player().await;
-                                }
+                        // D-Bus NameOwnerChanged for new MPRIS player (broker-filtered)
+                        Some(Ok(msg)) = name_owner_stream.next() => {
+                            if let Ok((name, old_owner, new_owner)) =
+                                msg.body().deserialize::<(&str, &str, &str)>()
+                                && name.starts_with("org.mpris.MediaPlayer2.")
+                                && old_owner != new_owner
+                                && !new_owner.is_empty()
+                            {
+                                let _ = self.discover_active_player().await;
                             }
                         }
                         Some(_) = async {
@@ -360,7 +369,7 @@ impl MprisEventHandler {
     /// Inner event loop for the currently active player.
     async fn run_active_player_loop(
         &mut self,
-        name_owner_stream: &mut NameOwnerChangedStream,
+        name_owner_stream: &mut MessageStream,
         global_prop_stream: &mut MessageStream,
     ) -> Result<(), MprisError> {
         let service = self.current_service.clone();
@@ -538,6 +547,27 @@ impl MprisEventHandler {
                     match find_best_active_service(&self.block_list, Some(&self.current_service), None).await {
                         Ok(Some(ref best_service)) if best_service == &self.current_service => {
                             // Same player remains active: do not tear down streams
+                            if let Ok(status) = proxy.playback_status().await
+                                && status != self.last_playback_status
+                            {
+                                self.last_playback_status = status.clone();
+                                let position = proxy
+                                    .position()
+                                    .await
+                                    .map(|us| us as f64 / 1_000_000.0)
+                                    .unwrap_or(0.0);
+                                let rate = proxy.rate().await.unwrap_or(1.0);
+                                if status == "Playing" {
+                                    tracker.arm(position);
+                                } else {
+                                    tracker.disarm();
+                                }
+                                self.emit(MprisEvent::StatusChange {
+                                    playback_status: status,
+                                    position,
+                                    rate,
+                                });
+                            }
                         }
                         Ok(Some(best_service)) => {
                             self.switch_to_player(&best_service).await?;
@@ -551,12 +581,11 @@ impl MprisEventHandler {
                     }
                 }
 
-                // 6. D-Bus NameOwnerChanged (player exited, launched, or replaced)
-                Some(signal) = name_owner_stream.next() => {
-                    if let Ok(args) = signal.args() {
-                        let name = args.name.as_str();
-                        let old_owner = args.old_owner.as_deref().unwrap_or("");
-                        let new_owner = args.new_owner.as_deref().unwrap_or("");
+                // 6. D-Bus NameOwnerChanged (player exited, launched, or replaced, broker-filtered to org.mpris.MediaPlayer2.*)
+                Some(Ok(msg)) = name_owner_stream.next() => {
+                    if let Ok((name, old_owner, new_owner)) =
+                        msg.body().deserialize::<(&str, &str, &str)>()
+                    {
                         let is_current = name == self.current_service;
                         let is_mpris = name.starts_with("org.mpris.MediaPlayer2.");
                         let owner_changed = old_owner != new_owner;
@@ -737,5 +766,114 @@ mod tests {
                 assert!(tracker.timer.is_none());
             }
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "Live D-Bus session test requiring active D-Bus daemon"]
+    async fn test_live_dbus_broker_match_rule_and_player_queries() {
+        let Ok(conn) = zbus::Connection::session().await else {
+            eprintln!("No live D-Bus session connection available; skipping live test.");
+            return;
+        };
+
+        // 1. Verify broker-level match rule filtering with arg0ns
+        let mpris_name_rule = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface("org.freedesktop.DBus")
+            .unwrap()
+            .member("NameOwnerChanged")
+            .unwrap()
+            .arg0ns("org.mpris.MediaPlayer2")
+            .unwrap()
+            .build();
+        let mut mpris_stream = MessageStream::for_match_rule(mpris_name_rule, &conn, None)
+            .await
+            .unwrap();
+
+        // 2. Query active players on the bus right now
+        let active = find_best_active_service(&[], None, None).await;
+        eprintln!("Live D-Bus find_best_active_service result: {active:?}");
+        assert!(active.is_ok());
+
+        if let Ok(Some(service)) = active {
+            let player_proxy =
+                crate::mpris::proxies::MediaPlayer2PlayerProxy::new(&conn, service.as_str()).await;
+            let status = if let Ok(ref p) = player_proxy {
+                p.playback_status().await.unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let meta = crate::mpris::metadata::get_metadata(&service).await;
+            let pos = crate::mpris::connection::get_position(&service).await;
+            eprintln!(
+                "Live player query on '{service}': status={status}, meta={meta:?}, pos={pos:?}"
+            );
+            assert!(!status.is_empty());
+            assert!(meta.is_ok());
+        }
+
+        // 3. Test broker-level filtering:
+        // A non-MPRIS name MUST be filtered out by the D-Bus daemon and NOT appear on mpris_stream
+        let non_mpris_name =
+            zbus::names::WellKnownName::try_from("org.test.NonMprisProbe").unwrap();
+        let dbus_proxy = zbus::fdo::DBusProxy::new(&conn).await.unwrap();
+        let _ = dbus_proxy
+            .request_name(
+                non_mpris_name.as_ref(),
+                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
+            )
+            .await
+            .unwrap();
+
+        let non_mpris_leaked = tokio::time::timeout(Duration::from_millis(60), async {
+            while let Some(Ok(msg)) = mpris_stream.next().await {
+                if let Ok((name, _old, _new)) = msg.body().deserialize::<(&str, &str, &str)>()
+                    && name == "org.test.NonMprisProbe"
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+        eprintln!(
+            "Non-MPRIS signal leaked to broker stream: {non_mpris_leaked:?} (must be Err(Elapsed))"
+        );
+        assert!(
+            non_mpris_leaked.is_err(),
+            "Non-MPRIS signal must be filtered out at broker layer"
+        );
+        let _ = dbus_proxy.release_name(non_mpris_name.as_ref()).await;
+
+        // An MPRIS name MUST be forwarded by the broker and received on mpris_stream
+        let test_name_str = format!("org.mpris.MediaPlayer2.TestLiveProbe{}", std::process::id());
+        let test_bus_name = zbus::names::WellKnownName::try_from(test_name_str.as_str()).unwrap();
+
+        let reply = dbus_proxy
+            .request_name(
+                test_bus_name.as_ref(),
+                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
+            )
+            .await
+            .unwrap();
+        eprintln!("RequestName reply: {reply:?}");
+
+        let received = tokio::time::timeout(Duration::from_millis(500), async {
+            while let Some(Ok(msg)) = mpris_stream.next().await {
+                if let Ok((name, _old, _new)) = msg.body().deserialize::<(&str, &str, &str)>()
+                    && name == test_name_str.as_str()
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+
+        eprintln!("Broker-filtered stream received MPRIS name signal: {received:?}");
+        assert_eq!(received, Ok(true));
+
+        // Release the test name
+        let _ = dbus_proxy.release_name(test_bus_name.as_ref()).await;
     }
 }
