@@ -38,9 +38,22 @@ fn probe_delay(attempt: u8) -> Duration {
 /// Result of stepping the calibration state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalibrationStepResult {
-    Continue,
+    /// Audio is still buffering at anchor; continue adaptive probes without emitting calibration event.
+    Buffering,
+    /// Audio movement detected; armed for confirmation check. Emits calibration event.
+    Moved,
+    /// Continuous audio progression confirmed; steady-state sync achieved and tracker disarmed.
     Confirmed,
+    /// Exceeded maximum probe attempts without steady progression; tracker disarmed.
     TimedOut,
+}
+
+impl CalibrationStepResult {
+    /// Returns true if audio movement was detected or continuous playback was confirmed.
+    #[must_use]
+    pub fn should_emit(&self) -> bool {
+        matches!(self, Self::Moved | Self::Confirmed)
+    }
 }
 
 /// Transient calibration state machine for detecting when a player actually starts
@@ -98,12 +111,13 @@ impl CalibrationTracker {
 
         if moved {
             if !self.confirmed {
-                // Audio started advancing; schedule 1 final confirmation check to lock in steady-state sync
+                // Audio started advancing; update anchor to verify continuous playback on confirmation check
                 self.confirmed = true;
+                self.anchor_pos = real_pos;
                 self.timer = Some(Box::pin(tokio::time::sleep(
                     CALIBRATION_CONFIRMATION_INTERVAL,
                 )));
-                CalibrationStepResult::Continue
+                CalibrationStepResult::Moved
             } else {
                 // Steady-state verified: disarm calibration for the remainder of this track
                 self.disarm();
@@ -112,7 +126,7 @@ impl CalibrationTracker {
         } else if self.attempts < MAX_CALIBRATION_ATTEMPTS {
             // Still buffering (real_pos unchanged from anchor); adaptive retry
             self.timer = Some(Box::pin(tokio::time::sleep(probe_delay(self.attempts))));
-            CalibrationStepResult::Continue
+            CalibrationStepResult::Buffering
         } else {
             // Reached maximum attempts (slow network timeout): disarm
             self.disarm();
@@ -125,7 +139,7 @@ impl CalibrationTracker {
         self.error_attempts += 1;
         if self.error_attempts < MAX_ERROR_ATTEMPTS {
             self.timer = Some(Box::pin(tokio::time::sleep(Duration::from_millis(400))));
-            CalibrationStepResult::Continue
+            CalibrationStepResult::Buffering
         } else {
             // Player persistently fails position queries: time out so local clock can fallback
             self.disarm();
@@ -153,6 +167,7 @@ pub enum MprisEvent {
         position: f64,
     },
     Calibrated {
+        metadata: TrackMetadata,
         position: f64,
     },
     CalibrationTimeout,
@@ -427,8 +442,13 @@ impl MprisEventHandler {
                         match proxy.position().await {
                             Ok(microsecs) => {
                                 let real_pos = microsecs as f64 / 1_000_000.0;
-                                self.emit(MprisEvent::Calibrated { position: real_pos });
-                                if tracker.on_step(real_pos) == CalibrationStepResult::TimedOut {
+                                let step_res = tracker.on_step(real_pos);
+                                if step_res.should_emit() {
+                                    self.emit(MprisEvent::Calibrated {
+                                        metadata: self.last_track.clone(),
+                                        position: real_pos,
+                                    });
+                                } else if step_res == CalibrationStepResult::TimedOut {
                                     self.emit(MprisEvent::CalibrationTimeout);
                                 }
                             }
@@ -674,19 +694,19 @@ mod tests {
         let mut tracker = CalibrationTracker::new(true, 0.0);
 
         // Step 1: Still buffering at 0.0s
-        assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Continue);
+        assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Buffering);
         assert_eq!(tracker.attempts, 1);
         assert!(!tracker.confirmed);
         assert!(tracker.timer.is_some());
 
         // Step 2: Still buffering at 0.0s
-        assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Continue);
+        assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Buffering);
         assert_eq!(tracker.attempts, 2);
         assert!(!tracker.confirmed);
         assert!(tracker.timer.is_some());
 
         // Step 3: Audio starts playing (moved past delta threshold)
-        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Continue);
+        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Moved);
         assert_eq!(tracker.attempts, 3);
         assert!(tracker.confirmed);
         assert!(tracker.timer.is_some()); // Armed for final confirmation
@@ -698,17 +718,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tracker_confirmation_requires_advancement() {
+        let mut tracker = CalibrationTracker::new(true, 0.0);
+
+        // Movement observed
+        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Moved);
+        assert!(tracker.confirmed);
+
+        // Player froze at 0.4s during confirmation probe
+        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Buffering);
+        // Should not disarm; continues adaptive probes
+        assert!(tracker.timer.is_some());
+
+        // Playback resumes and advances to 0.7s
+        assert_eq!(tracker.on_step(0.7), CalibrationStepResult::Confirmed);
+        assert!(tracker.timer.is_none());
+    }
+
+    #[tokio::test]
     async fn test_tracker_mid_track_resume_buffering() {
         let mut tracker = CalibrationTracker::new(true, 45.0);
 
         // Step 1: Mid-track buffering (authoritative pos still 45.0)
-        assert_eq!(tracker.on_step(45.0), CalibrationStepResult::Continue);
+        assert_eq!(tracker.on_step(45.0), CalibrationStepResult::Buffering);
         assert_eq!(tracker.attempts, 1);
         assert!(!tracker.confirmed);
         assert!(tracker.timer.is_some());
 
-        // Step 2: Resumed playback moves to 45.3s (delta 0.3 > 0.2)
-        assert_eq!(tracker.on_step(45.3), CalibrationStepResult::Continue);
+        // Step 2: Resumed playback moves to 45.3s (delta 0.3 > 0.03)
+        assert_eq!(tracker.on_step(45.3), CalibrationStepResult::Moved);
         assert!(tracker.confirmed);
         assert!(tracker.timer.is_some());
 
@@ -723,7 +761,7 @@ mod tests {
         for i in 1..=MAX_CALIBRATION_ATTEMPTS {
             let res = tracker.on_step(0.0);
             if i < MAX_CALIBRATION_ATTEMPTS {
-                assert_eq!(res, CalibrationStepResult::Continue);
+                assert_eq!(res, CalibrationStepResult::Buffering);
                 assert!(tracker.timer.is_some());
             } else {
                 assert_eq!(res, CalibrationStepResult::TimedOut);
@@ -738,13 +776,13 @@ mod tests {
 
         // Player buffers online for 15 attempts (past fast probes into 1s interval)
         for i in 1..=15 {
-            assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Continue);
+            assert_eq!(tracker.on_step(0.0), CalibrationStepResult::Buffering);
             assert_eq!(tracker.attempts, i);
             assert!(tracker.timer.is_some());
         }
 
         // At attempt 16 (e.g. after ~10s of buffering), audio finally moves to 0.4s
-        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Continue);
+        assert_eq!(tracker.on_step(0.4), CalibrationStepResult::Moved);
         assert!(tracker.confirmed);
         assert!(tracker.timer.is_some());
 
@@ -759,7 +797,7 @@ mod tests {
         for i in 1..=MAX_ERROR_ATTEMPTS {
             let res = tracker.on_error();
             if i < MAX_ERROR_ATTEMPTS {
-                assert_eq!(res, CalibrationStepResult::Continue);
+                assert_eq!(res, CalibrationStepResult::Buffering);
                 assert!(tracker.timer.is_some());
             } else {
                 assert_eq!(res, CalibrationStepResult::TimedOut);

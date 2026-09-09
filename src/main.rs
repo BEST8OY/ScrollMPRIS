@@ -90,8 +90,10 @@ async fn main() -> Result<()> {
                     MprisEvent::Seeked { position } => {
                         player_state.reset_position_cache(position);
                     }
-                    MprisEvent::Calibrated { position } => {
-                        player_state.calibrate_position(position, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
+                    MprisEvent::Calibrated { metadata, position } => {
+                        if !player_state.has_changed(&metadata) {
+                            player_state.calibrate_position(position, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
+                        }
                     }
                     MprisEvent::CalibrationTimeout => {
                         player_state.force_calibrate();
