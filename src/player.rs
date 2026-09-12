@@ -1,12 +1,13 @@
 // Minimal state data structures for lyrics and player
 
-use crate::mpris::metadata::TrackMetadata;
+use crate::mpris::metadata::{TrackMetadata, extract_first_artist_from_str};
 use std::time::Instant;
 
 #[derive(Debug, PartialEq)]
 pub struct PlayerState {
     pub title: String,
     pub artist: String,
+    pub first_artist: String,
     pub album: String,
     pub playing: bool,
     pub status: String,
@@ -25,6 +26,7 @@ impl Default for PlayerState {
         Self {
             title: String::new(),
             artist: String::new(),
+            first_artist: String::new(),
             album: String::new(),
             playing: false,
             status: String::new(),
@@ -47,6 +49,7 @@ impl PlayerState {
     pub fn update_from_metadata(&mut self, meta: &TrackMetadata) {
         self.title = meta.title.clone();
         self.artist = meta.artist.clone();
+        self.first_artist = meta.first_artist.clone();
         self.album = meta.album.clone();
         self.length = meta.length;
         self.position = 0.0;
@@ -55,6 +58,16 @@ impl PlayerState {
         self.last_update = Some(Instant::now());
         self.calibrated = false;
         // service should be set elsewhere
+    }
+
+    /// Returns the primary/first artist. Uses `first_artist` if available,
+    /// or falls back to extracting from `artist`.
+    pub fn get_first_artist(&self) -> &str {
+        if !self.first_artist.is_empty() {
+            &self.first_artist
+        } else {
+            extract_first_artist_from_str(&self.artist)
+        }
     }
 
     pub fn set_service(&mut self, service: &str) {
@@ -106,7 +119,10 @@ impl PlayerState {
 
     #[allow(dead_code)]
     pub fn has_changed(&self, meta: &TrackMetadata) -> bool {
-        self.title != meta.title || self.artist != meta.artist || self.album != meta.album
+        self.title != meta.title
+            || self.artist != meta.artist
+            || self.first_artist != meta.first_artist
+            || self.album != meta.album
     }
 
     pub fn reset_position_cache(&mut self, position: f64) {
@@ -298,5 +314,27 @@ mod tests {
         let corrected = state.calibrate_position(0.0, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
         assert!(!corrected);
         assert!(state.estimate_position() >= 30.0);
+    }
+
+    #[test]
+    fn test_first_artist_resolution() {
+        let meta = TrackMetadata {
+            title: "Song".to_string(),
+            artist: "Queen, David Bowie".to_string(),
+            first_artist: "Queen".to_string(),
+            album: "Album".to_string(),
+            length: Some(180.0),
+        };
+        let mut state = PlayerState::default();
+        state.update_from_metadata(&meta);
+        assert_eq!(state.first_artist, "Queen");
+        assert_eq!(state.get_first_artist(), "Queen");
+
+        // Fallback when first_artist is empty
+        let fallback_state = PlayerState {
+            artist: "Artist A, Artist B".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(fallback_state.get_first_artist(), "Artist A");
     }
 }

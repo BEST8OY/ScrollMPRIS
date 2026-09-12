@@ -11,6 +11,7 @@ use crate::mpris::proxies::MediaPlayer2PlayerProxy;
 pub struct TrackMetadata {
     pub title: String,
     pub artist: String,
+    pub first_artist: String,
     pub album: String,
     pub length: Option<f64>,
 }
@@ -113,6 +114,71 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
     }
 }
 
+/// Helper to extract the first artist name from a delimited string (e.g. "Artist 1, Artist 2", "Artist 1; Artist 2", "Artist 1 / Artist 2").
+pub fn extract_first_artist_from_str(s: &str) -> &str {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return "";
+    }
+    for delim in [", ", "; ", " / ", " feat. ", " ft. ", " feat ", " ft "] {
+        if let Some((first, _)) = trimmed.split_once(delim) {
+            let first_trimmed = first.trim();
+            if !first_trimmed.is_empty() {
+                return first_trimmed;
+            }
+        }
+    }
+    trimmed
+}
+
+/// Helper to extract both full joined artists and the first/primary artist from `xesam:artist`.
+pub fn extract_artists(val: &OwnedValue) -> (String, String) {
+    if let Ok(s) = <&str>::try_from(val) {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return (String::new(), String::new());
+        }
+        let first = extract_first_artist_from_str(trimmed).to_string();
+        return (trimmed.to_string(), first);
+    }
+    match &**val {
+        zvariant::Value::Str(s) => {
+            let trimmed = s.as_str().trim();
+            if trimmed.is_empty() {
+                (String::new(), String::new())
+            } else {
+                let first = extract_first_artist_from_str(trimmed).to_string();
+                (trimmed.to_string(), first)
+            }
+        }
+        zvariant::Value::Array(arr) => {
+            let strings: Vec<String> = arr
+                .iter()
+                .filter_map(|elem| {
+                    if let Ok(s) = <&str>::try_from(elem) {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            Some(trimmed.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if strings.is_empty() {
+                (String::new(), String::new())
+            } else {
+                let first = strings[0].clone();
+                let joined = strings.join(", ");
+                (joined, first)
+            }
+        }
+        _ => (String::new(), String::new()),
+    }
+}
+
 /// Helper to extract track length in seconds (from microseconds).
 pub fn extract_length_seconds(val: &OwnedValue) -> Option<f64> {
     if let Ok(microsecs) = i64::try_from(val) {
@@ -142,9 +208,9 @@ pub fn extract_metadata(map: &HashMap<String, OwnedValue>) -> TrackMetadata {
         return TrackMetadata::default();
     }
 
-    let artist = map
+    let (artist, first_artist) = map
         .get("xesam:artist")
-        .and_then(extract_joined_string_array)
+        .map(extract_artists)
         .unwrap_or_default();
     let album = map
         .get("xesam:album")
@@ -155,6 +221,7 @@ pub fn extract_metadata(map: &HashMap<String, OwnedValue>) -> TrackMetadata {
     TrackMetadata {
         title,
         artist,
+        first_artist,
         album,
         length,
     }
@@ -204,6 +271,7 @@ mod tests {
         let meta = extract_metadata(&map);
         assert_eq!(meta.title, "Bohemian Rhapsody");
         assert_eq!(meta.artist, "Queen");
+        assert_eq!(meta.first_artist, "Queen");
         assert_eq!(meta.album, "A Night at the Opera");
         assert_eq!(meta.length, Some(354.0));
     }
@@ -227,6 +295,7 @@ mod tests {
         let meta = extract_metadata(&map);
         assert_eq!(meta.title, "Starboy");
         assert_eq!(meta.artist, "The Weeknd");
+        assert_eq!(meta.first_artist, "The Weeknd");
         assert_eq!(meta.album, "Starboy");
     }
 
@@ -273,6 +342,7 @@ mod tests {
         let meta = extract_metadata(&map);
         assert_eq!(meta.title, "Array Title");
         assert_eq!(meta.artist, "Artist A, Artist B");
+        assert_eq!(meta.first_artist, "Artist A");
         assert_eq!(meta.album, "Array Album 1, Array Album 2");
 
         let val_str = OwnedValue::try_from(Value::from("single")).unwrap();
@@ -330,5 +400,29 @@ mod tests {
             extract_string_or_first_item(&val_empty),
             Some("/".to_string())
         );
+    }
+
+    #[test]
+    fn test_extract_first_artist_delimiters() {
+        assert_eq!(extract_first_artist_from_str("Queen, David Bowie"), "Queen");
+        assert_eq!(extract_first_artist_from_str("Artist A; Artist B"), "Artist A");
+        assert_eq!(extract_first_artist_from_str("Daft Punk / Pharrell Williams"), "Daft Punk");
+        assert_eq!(extract_first_artist_from_str("Major Lazer feat. Justin Bieber"), "Major Lazer");
+        assert_eq!(extract_first_artist_from_str("Clean Bandit ft. Zara Larsson"), "Clean Bandit");
+        assert_eq!(extract_first_artist_from_str("Single Artist"), "Single Artist");
+        assert_eq!(extract_first_artist_from_str(""), "");
+    }
+
+    #[test]
+    fn test_extract_artists_helper() {
+        let val_arr = OwnedValue::try_from(Value::from(vec!["Artist One", "Artist Two"])).unwrap();
+        let (all, first) = extract_artists(&val_arr);
+        assert_eq!(all, "Artist One, Artist Two");
+        assert_eq!(first, "Artist One");
+
+        let val_str = OwnedValue::try_from(Value::from("Artist A, Artist B")).unwrap();
+        let (all, first) = extract_artists(&val_str);
+        assert_eq!(all, "Artist A, Artist B");
+        assert_eq!(first, "Artist A");
     }
 }

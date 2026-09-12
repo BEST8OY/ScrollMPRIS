@@ -99,6 +99,8 @@ pub struct ConfigFile {
     pub tooltip_format: Option<String>,
     pub freeze: Option<bool>,
     pub freeze_on_pause: Option<bool>,
+    pub first_artist: Option<bool>,
+    pub only_first_artist: Option<bool>,
     pub icons: Option<IconsSection>,
 }
 
@@ -155,6 +157,10 @@ pub struct CliArgs {
     /// Freeze scrolling and reset text when paused
     #[arg(long = "freeze", action = clap::ArgAction::SetTrue)]
     pub freeze_on_pause: bool,
+
+    /// Show only the first artist for collaborating or multi-artist tracks
+    #[arg(long = "first-artist", alias = "only-first-artist", action = clap::ArgAction::SetTrue)]
+    pub first_artist: bool,
 }
 
 /// Fully resolved active configuration used throughout ScrollMPRIS.
@@ -178,6 +184,8 @@ pub struct Config {
     pub status_icons: StatusIcons,
     /// Freeze scrolling and reset text when paused
     pub freeze_on_pause: bool,
+    /// Show only the first artist for collaborating or multi-artist tracks
+    pub first_artist: bool,
     /// Delay in milliseconds (computed from speed)
     pub delay: u64,
     /// Map of player names to icons
@@ -196,6 +204,7 @@ impl Default for Config {
             tooltip_format: "{player_icon} {status_icon} {title} - {artist} | {album}".to_string(),
             status_icons: StatusIcons::default(),
             freeze_on_pause: false,
+            first_artist: false,
             delay: 1000,
             icon_format: default_icon_map(),
         }
@@ -275,6 +284,9 @@ blocked = []
 # Pause scrolling and reset text to the start when playback is paused.
 freeze_on_pause = false
 
+# Show only the first artist for collaborating or multi-artist tracks.
+first_artist = false
+
 # -----------------------------------------------------------------------------
 # Icons & Status Indicator
 # -----------------------------------------------------------------------------
@@ -327,6 +339,9 @@ impl Config {
         if let Some(fr) = file.freeze.or(file.freeze_on_pause) {
             self.freeze_on_pause = fr;
         }
+        if let Some(fa) = file.first_artist.or(file.only_first_artist) {
+            self.first_artist = fa;
+        }
 
         if let Some(icons_sec) = file.icons {
             if let Some(status) = icons_sec.status {
@@ -378,6 +393,9 @@ impl Config {
         }
         if cli.freeze_on_pause {
             self.freeze_on_pause = true;
+        }
+        if cli.first_artist {
+            self.first_artist = true;
         }
         if let Some(json) = cli.icon_format_json {
             if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json) {
@@ -469,6 +487,7 @@ mod tests {
         assert_eq!(config.status_icons.paused, "");
         assert_eq!(config.status_icons.stopped, "");
         assert!(!config.freeze_on_pause);
+        assert!(!config.first_artist);
         assert_eq!(config.icon_format.get("spotify").unwrap(), "");
     }
 
@@ -581,5 +600,36 @@ mod tests {
             "Generated default config must be valid TOML: {:?}",
             parsed.err()
         );
+    }
+
+    #[test]
+    fn test_first_artist_config_file_and_cli() {
+        // 1. Config file parsing with first_artist = true
+        let toml_str = r#"
+            first_artist = true
+        "#;
+        let file_cfg: ConfigFile = toml::from_str(toml_str).unwrap();
+        let mut config = Config::default();
+        config.apply_config_file(file_cfg);
+        assert!(config.first_artist);
+
+        // 2. Config file parsing with only_first_artist = true alias
+        let toml_alias = r#"
+            only_first_artist = true
+        "#;
+        let file_cfg_alias: ConfigFile = toml::from_str(toml_alias).unwrap();
+        let mut config_alias = Config::default();
+        config_alias.apply_config_file(file_cfg_alias);
+        assert!(config_alias.first_artist);
+
+        // 3. CLI override sets first_artist = true
+        let mut config_cli = Config::default();
+        assert!(!config_cli.first_artist);
+        let cli = CliArgs {
+            first_artist: true,
+            ..Default::default()
+        };
+        config_cli.apply_cli_overrides(cli);
+        assert!(config_cli.first_artist);
     }
 }

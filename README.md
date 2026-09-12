@@ -77,6 +77,7 @@ format_stopped = ""                     # Output when stopped ("" to auto-hide f
 tooltip_format = "{player_icon} {status_icon} {title} - {artist} | {album}"
 blocked = ["firefox", "chromium"]       # Ignore audio from specific players
 freeze_on_pause = true                  # Pause ticker and reset to start when paused
+first_artist = false                    # Show only the first artist for collaborating tracks
 
 # Status glyphs for playback states
 [icons.status]
@@ -115,7 +116,8 @@ ScrollMPRIS is **100% token-driven**: you control exactly where each element app
 | | `{remaining}` | `{countdown}` | Remaining track countdown | `02:45` |
 | | `{length}` | `{duration}` | Total track duration | `04:08` |
 | **Metadata** | `{title}` | | Track title | `Blinding Lights` |
-| | `{artist}` | | Track artist(s) (comma-joined) | `The Weeknd` |
+| | `{artist}` | | Track artist(s) (or primary artist when `first_artist` is enabled) | `The Weeknd` |
+| | `{first_artist}` | `{primary_artist}` | First/primary artist only | `The Weeknd` |
 | | `{album}` | | Track album name | `After Hours` |
 | | `{player}` | | Clean player service name | `spotify` |
 | | `{status}` | | Raw playback status | `Playing` / `Paused` |
@@ -173,6 +175,7 @@ Scroll individual metadata fields independently while keeping other elements sta
 | `--tooltip-format <string>` | Tooltip format (resolves all fields un-scrolled on hover) | `--tooltip-format '{title} - {artist} \| {album}'` |
 | `--icon-format <string>` | Override player brand icons via JSON mapping | `--icon-format '{"404": "", "spotify": ""}'` |
 | `--freeze` | Pause scrolling and reset text to start when paused | `--freeze` |
+| `--first-artist` | Show only the first artist for collaborating or multi-artist tracks | `--first-artist` |
 
 ---
 
@@ -212,6 +215,12 @@ ScrollMPRIS -s 50 --format '{player_icon} {title:15:marquee} | {artist:10:bounce
 Keep the Waybar module visible with custom placeholder text even when music stops:
 ```bash
 ScrollMPRIS --format '{player_icon} {status_icon} {title:20} - {artist}' --format-stopped '{status_icon} No Media'
+```
+
+### 8. Primary Artist Only (Clean Multi-Artist / Collaboration Tracks)
+Display only the main artist and omit featured collaborators:
+```bash
+ScrollMPRIS --first-artist --format '{player_icon} {status_icon} {title:20} - {artist}'
 ```
 
 ---

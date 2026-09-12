@@ -68,7 +68,14 @@ pub fn get_status_icon(player_state: &PlayerState, status_icons: &StatusIcons) -
 pub fn get_field_value(field: &str, player_state: &PlayerState, config: &Config) -> String {
     match field.to_lowercase().as_str() {
         "title" => player_state.title.clone(),
-        "artist" => player_state.artist.clone(),
+        "artist" => {
+            if config.first_artist {
+                player_state.get_first_artist().to_string()
+            } else {
+                player_state.artist.clone()
+            }
+        }
+        "first_artist" | "primary_artist" => player_state.get_first_artist().to_string(),
         "album" => player_state.album.clone(),
         "player" => player_state
             .get_service()
@@ -154,9 +161,12 @@ pub fn format_tooltip(format: &str, player_state: &PlayerState, config: &Config)
 
 /// Legacy format_metadata helper.
 pub fn format_metadata(format: &str, title: &str, artist: &str, album: &str) -> String {
+    let first_artist = crate::mpris::metadata::extract_first_artist_from_str(artist);
     format
         .replace("{title}", title.trim())
         .replace("{artist}", artist.trim())
+        .replace("{first_artist}", first_artist)
+        .replace("{primary_artist}", first_artist)
         .replace("{album}", album.trim())
         .trim()
         .to_string()
@@ -707,5 +717,79 @@ mod tests {
                 frame
             );
         }
+    }
+
+    #[test]
+    fn test_get_field_value_first_artist_mode() {
+        let mut player_state = PlayerState {
+            title: "Under Pressure".to_string(),
+            artist: "Queen, David Bowie".to_string(),
+            first_artist: "Queen".to_string(),
+            ..PlayerState::default()
+        };
+
+        // Default mode (first_artist = false): {artist} gives full artist string
+        let default_config = Config::default();
+        assert_eq!(
+            get_field_value("artist", &player_state, &default_config),
+            "Queen, David Bowie"
+        );
+
+        // first_artist mode (first_artist = true): {artist} gives first artist only
+        let first_artist_config = Config {
+            first_artist: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            get_field_value("artist", &player_state, &first_artist_config),
+            "Queen"
+        );
+
+        // Explicit tokens {first_artist} and {primary_artist} always give first artist
+        assert_eq!(
+            get_field_value("first_artist", &player_state, &default_config),
+            "Queen"
+        );
+        assert_eq!(
+            get_field_value("primary_artist", &player_state, &default_config),
+            "Queen"
+        );
+
+        // Fallback when first_artist field was empty in player_state
+        player_state.first_artist = String::new();
+        assert_eq!(
+            get_field_value("artist", &player_state, &first_artist_config),
+            "Queen"
+        );
+        assert_eq!(
+            get_field_value("first_artist", &player_state, &default_config),
+            "Queen"
+        );
+    }
+
+    #[test]
+    fn test_first_artist_format_and_tooltip() {
+        let player_state = PlayerState {
+            title: "Under Pressure".to_string(),
+            artist: "Queen, David Bowie".to_string(),
+            first_artist: "Queen".to_string(),
+            album: "Hot Space".to_string(),
+            playing: true,
+            ..PlayerState::default()
+        };
+
+        let config_first = Config {
+            format: "{title} - {artist}".to_string(),
+            tooltip_format: "{title} by {artist} ({first_artist})".to_string(),
+            first_artist: true,
+            ..Default::default()
+        };
+
+        let tooltip = format_tooltip(&config_first.tooltip_format, &player_state, &config_first);
+        assert_eq!(tooltip, "Under Pressure by Queen (Queen)");
+
+        let mut scroll_states = ScrollStateMap::new();
+        let rendered = render_scrolled_format(&config_first, &player_state, &mut scroll_states, false);
+        assert_eq!(rendered, "Under Pressure - Queen");
     }
 }

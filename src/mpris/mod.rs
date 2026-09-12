@@ -14,8 +14,8 @@ pub use connection::{
 pub use events::{CalibrationStepResult, MprisEvent, MprisEventHandler};
 #[allow(unused_imports)]
 pub use metadata::{
-    TrackMetadata, extract_joined_string_array, extract_length_seconds, extract_metadata,
-    extract_string_or_first_item, is_no_track,
+    TrackMetadata, extract_artists, extract_first_artist_from_str, extract_joined_string_array,
+    extract_length_seconds, extract_metadata, extract_string_or_first_item, is_no_track,
 };
 #[allow(unused_imports)]
 pub use proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
