@@ -12,7 +12,7 @@ depends=(
   'gcc-libs'
 )
 makedepends=(
-  'cargo'
+  'rust'
   'git'
 )
 optdepends=(
