@@ -1,7 +1,7 @@
 //! Track metadata struct and metadata querying for MPRIS using zbus.
 
 use std::collections::HashMap;
-use zvariant::OwnedValue;
+use zbus::{OwnedVariant, Variant};
 
 use crate::mpris::connection::{MprisError, get_dbus_conn};
 use crate::mpris::proxies::MediaPlayer2PlayerProxy;
@@ -27,8 +27,8 @@ pub fn is_no_track(trackid: &str) -> bool {
         || trimmed.eq_ignore_ascii_case("NoTrack")
 }
 
-/// Helper to extract a string from an `OwnedValue` that may be a `Str` or an `Array` of strings.
-pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
+/// Helper to extract a string from an `OwnedVariant` that may be a `Str` or an `Array` of strings.
+pub fn extract_string_or_first_item(val: &OwnedVariant) -> Option<String> {
     if let Ok(s) = <&str>::try_from(val) {
         let trimmed = s.trim();
         return if trimmed.is_empty() {
@@ -38,7 +38,7 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
         };
     }
     match &**val {
-        zvariant::Value::Str(s) => {
+        Variant::Str(s) => {
             let trimmed = s.as_str().trim();
             if trimmed.is_empty() {
                 None
@@ -46,7 +46,7 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
                 Some(trimmed.to_string())
             }
         }
-        zvariant::Value::ObjectPath(p) => {
+        Variant::ObjectPath(p) => {
             let trimmed = p.as_str().trim();
             if trimmed.is_empty() {
                 None
@@ -54,7 +54,7 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
                 Some(trimmed.to_string())
             }
         }
-        zvariant::Value::Array(arr) => {
+        Variant::Array(arr) => {
             for elem in arr.iter() {
                 if let Ok(s) = <&str>::try_from(elem) {
                     let trimmed = s.trim();
@@ -70,7 +70,7 @@ pub fn extract_string_or_first_item(val: &OwnedValue) -> Option<String> {
 }
 
 /// Helper to extract string or join array of strings with commas (for multi-artist / multi-album).
-pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
+pub fn extract_joined_string_array(val: &OwnedVariant) -> Option<String> {
     if let Ok(s) = <&str>::try_from(val) {
         let trimmed = s.trim();
         return if trimmed.is_empty() {
@@ -80,7 +80,7 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
         };
     }
     match &**val {
-        zvariant::Value::Str(s) => {
+        Variant::Str(s) => {
             let trimmed = s.as_str().trim();
             if trimmed.is_empty() {
                 None
@@ -88,7 +88,7 @@ pub fn extract_joined_string_array(val: &OwnedValue) -> Option<String> {
                 Some(trimmed.to_string())
             }
         }
-        zvariant::Value::Array(arr) => {
+        Variant::Array(arr) => {
             let strings: Vec<String> = arr
                 .iter()
                 .filter_map(|elem| {
@@ -132,7 +132,7 @@ pub fn extract_first_artist_from_str(s: &str) -> &str {
 }
 
 /// Helper to extract both full joined artists and the first/primary artist from `xesam:artist`.
-pub fn extract_artists(val: &OwnedValue) -> (String, String) {
+pub fn extract_artists(val: &OwnedVariant) -> (String, String) {
     if let Ok(s) = <&str>::try_from(val) {
         let trimmed = s.trim();
         if trimmed.is_empty() {
@@ -142,7 +142,7 @@ pub fn extract_artists(val: &OwnedValue) -> (String, String) {
         return (trimmed.to_string(), first);
     }
     match &**val {
-        zvariant::Value::Str(s) => {
+        Variant::Str(s) => {
             let trimmed = s.as_str().trim();
             if trimmed.is_empty() {
                 (String::new(), String::new())
@@ -151,7 +151,7 @@ pub fn extract_artists(val: &OwnedValue) -> (String, String) {
                 (trimmed.to_string(), first)
             }
         }
-        zvariant::Value::Array(arr) => {
+        Variant::Array(arr) => {
             let strings: Vec<String> = arr
                 .iter()
                 .filter_map(|elem| {
@@ -180,7 +180,7 @@ pub fn extract_artists(val: &OwnedValue) -> (String, String) {
 }
 
 /// Helper to extract track length in seconds (from microseconds).
-pub fn extract_length_seconds(val: &OwnedValue) -> Option<f64> {
+pub fn extract_length_seconds(val: &OwnedVariant) -> Option<f64> {
     if let Ok(microsecs) = i64::try_from(val) {
         return Some(microsecs as f64 / 1_000_000.0);
     }
@@ -191,7 +191,7 @@ pub fn extract_length_seconds(val: &OwnedValue) -> Option<f64> {
 }
 
 /// Extract metadata fields from a D-Bus property map.
-pub fn extract_metadata(map: &HashMap<String, OwnedValue>) -> TrackMetadata {
+pub fn extract_metadata(map: &HashMap<String, OwnedVariant>) -> TrackMetadata {
     let trackid = map
         .get("mpris:trackid")
         .and_then(extract_string_or_first_item);
@@ -235,7 +235,7 @@ pub async fn get_metadata(service: &str) -> Result<TrackMetadata, MprisError> {
     }
     let conn = get_dbus_conn().await?;
     let proxy = MediaPlayer2PlayerProxy::builder(&conn)
-        .destination(service)?
+        .destination(service)
         .build()
         .await?;
 
@@ -246,26 +246,25 @@ pub async fn get_metadata(service: &str) -> Result<TrackMetadata, MprisError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zvariant::Value;
 
     #[test]
     fn test_extract_metadata_standard() {
         let mut map = HashMap::new();
         map.insert(
             "xesam:title".to_string(),
-            OwnedValue::try_from(Value::from("Bohemian Rhapsody")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Bohemian Rhapsody")).unwrap(),
         );
         map.insert(
             "xesam:artist".to_string(),
-            OwnedValue::try_from(Value::from(vec!["Queen"])).unwrap(),
+            OwnedVariant::try_from(Variant::from(vec!["Queen"])).unwrap(),
         );
         map.insert(
             "xesam:album".to_string(),
-            OwnedValue::try_from(Value::from("A Night at the Opera")).unwrap(),
+            OwnedVariant::try_from(Variant::from("A Night at the Opera")).unwrap(),
         );
         map.insert(
             "mpris:length".to_string(),
-            OwnedValue::try_from(Value::from(354_000_000i64)).unwrap(),
+            OwnedVariant::try_from(Variant::from(354_000_000i64)).unwrap(),
         );
 
         let meta = extract_metadata(&map);
@@ -281,15 +280,15 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(
             "xesam:title".to_string(),
-            OwnedValue::try_from(Value::from("Starboy")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Starboy")).unwrap(),
         );
         map.insert(
             "xesam:artist".to_string(),
-            OwnedValue::try_from(Value::from("The Weeknd")).unwrap(),
+            OwnedVariant::try_from(Variant::from("The Weeknd")).unwrap(),
         );
         map.insert(
             "xesam:album".to_string(),
-            OwnedValue::try_from(Value::from("Starboy")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Starboy")).unwrap(),
         );
 
         let meta = extract_metadata(&map);
@@ -311,11 +310,11 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(
             "xesam:title".to_string(),
-            OwnedValue::try_from(Value::from("Song")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Song")).unwrap(),
         );
         map.insert(
             "mpris:length".to_string(),
-            OwnedValue::try_from(Value::from(180_000_000u64)).unwrap(),
+            OwnedVariant::try_from(Variant::from(180_000_000u64)).unwrap(),
         );
 
         let meta = extract_metadata(&map);
@@ -328,15 +327,15 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(
             "xesam:title".to_string(),
-            OwnedValue::try_from(Value::from(vec!["Array Title", "Alt Title"])).unwrap(),
+            OwnedVariant::try_from(Variant::from(vec!["Array Title", "Alt Title"])).unwrap(),
         );
         map.insert(
             "xesam:artist".to_string(),
-            OwnedValue::try_from(Value::from(vec!["Artist A", "Artist B"])).unwrap(),
+            OwnedVariant::try_from(Variant::from(vec!["Artist A", "Artist B"])).unwrap(),
         );
         map.insert(
             "xesam:album".to_string(),
-            OwnedValue::try_from(Value::from(vec!["Array Album 1", "Array Album 2"])).unwrap(),
+            OwnedVariant::try_from(Variant::from(vec!["Array Album 1", "Array Album 2"])).unwrap(),
         );
 
         let meta = extract_metadata(&map);
@@ -345,7 +344,7 @@ mod tests {
         assert_eq!(meta.first_artist, "Artist A");
         assert_eq!(meta.album, "Array Album 1, Array Album 2");
 
-        let val_str = OwnedValue::try_from(Value::from("single")).unwrap();
+        let val_str = OwnedVariant::try_from(Variant::from("single")).unwrap();
         assert_eq!(
             extract_string_or_first_item(&val_str),
             Some("single".to_string())
@@ -355,10 +354,10 @@ mod tests {
             Some("single".to_string())
         );
 
-        let val_len_i64 = OwnedValue::try_from(Value::from(120_000_000i64)).unwrap();
+        let val_len_i64 = OwnedVariant::try_from(Variant::from(120_000_000i64)).unwrap();
         assert_eq!(extract_length_seconds(&val_len_i64), Some(120.0));
 
-        let val_len_u64 = OwnedValue::try_from(Value::from(90_000_000u64)).unwrap();
+        let val_len_u64 = OwnedVariant::try_from(Variant::from(90_000_000u64)).unwrap();
         assert_eq!(extract_length_seconds(&val_len_u64), Some(90.0));
     }
 
@@ -374,11 +373,12 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(
             "mpris:trackid".to_string(),
-            OwnedValue::try_from(Value::from("/org/mpris/MediaPlayer2/TrackList/NoTrack")).unwrap(),
+            OwnedVariant::try_from(Variant::from("/org/mpris/MediaPlayer2/TrackList/NoTrack"))
+                .unwrap(),
         );
         map.insert(
             "xesam:artist".to_string(),
-            OwnedValue::try_from(Value::from(vec!["Stale Artist"])).unwrap(),
+            OwnedVariant::try_from(Variant::from(vec!["Stale Artist"])).unwrap(),
         );
 
         let meta = extract_metadata(&map);
@@ -387,15 +387,15 @@ mod tests {
 
     #[test]
     fn test_extract_string_or_first_item_object_path() {
-        let op = zvariant::ObjectPath::try_from("/org/mpris/MediaPlayer2/Track/1").unwrap();
-        let val = OwnedValue::try_from(Value::ObjectPath(op)).unwrap();
+        let op = zbus::ObjectPath::try_from("/org/mpris/MediaPlayer2/Track/1").unwrap();
+        let val = OwnedVariant::try_from(Variant::ObjectPath(op)).unwrap();
         assert_eq!(
             extract_string_or_first_item(&val),
             Some("/org/mpris/MediaPlayer2/Track/1".to_string())
         );
 
-        let empty_op = zvariant::ObjectPath::try_from("/").unwrap();
-        let val_empty = OwnedValue::try_from(Value::ObjectPath(empty_op)).unwrap();
+        let empty_op = zbus::ObjectPath::try_from("/").unwrap();
+        let val_empty = OwnedVariant::try_from(Variant::ObjectPath(empty_op)).unwrap();
         assert_eq!(
             extract_string_or_first_item(&val_empty),
             Some("/".to_string())
@@ -405,22 +405,38 @@ mod tests {
     #[test]
     fn test_extract_first_artist_delimiters() {
         assert_eq!(extract_first_artist_from_str("Queen, David Bowie"), "Queen");
-        assert_eq!(extract_first_artist_from_str("Artist A; Artist B"), "Artist A");
-        assert_eq!(extract_first_artist_from_str("Daft Punk / Pharrell Williams"), "Daft Punk");
-        assert_eq!(extract_first_artist_from_str("Major Lazer feat. Justin Bieber"), "Major Lazer");
-        assert_eq!(extract_first_artist_from_str("Clean Bandit ft. Zara Larsson"), "Clean Bandit");
-        assert_eq!(extract_first_artist_from_str("Single Artist"), "Single Artist");
+        assert_eq!(
+            extract_first_artist_from_str("Artist A; Artist B"),
+            "Artist A"
+        );
+        assert_eq!(
+            extract_first_artist_from_str("Daft Punk / Pharrell Williams"),
+            "Daft Punk"
+        );
+        assert_eq!(
+            extract_first_artist_from_str("Major Lazer feat. Justin Bieber"),
+            "Major Lazer"
+        );
+        assert_eq!(
+            extract_first_artist_from_str("Clean Bandit ft. Zara Larsson"),
+            "Clean Bandit"
+        );
+        assert_eq!(
+            extract_first_artist_from_str("Single Artist"),
+            "Single Artist"
+        );
         assert_eq!(extract_first_artist_from_str(""), "");
     }
 
     #[test]
     fn test_extract_artists_helper() {
-        let val_arr = OwnedValue::try_from(Value::from(vec!["Artist One", "Artist Two"])).unwrap();
+        let val_arr =
+            OwnedVariant::try_from(Variant::from(vec!["Artist One", "Artist Two"])).unwrap();
         let (all, first) = extract_artists(&val_arr);
         assert_eq!(all, "Artist One, Artist Two");
         assert_eq!(first, "Artist One");
 
-        let val_str = OwnedValue::try_from(Value::from("Artist A, Artist B")).unwrap();
+        let val_str = OwnedVariant::try_from(Variant::from("Artist A, Artist B")).unwrap();
         let (all, first) = extract_artists(&val_str);
         assert_eq!(all, "Artist A, Artist B");
         assert_eq!(first, "Artist A");

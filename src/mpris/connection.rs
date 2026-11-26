@@ -5,7 +5,7 @@ use std::ops::Deref;
 use tokio::sync::OnceCell;
 use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
-use zvariant::OwnedValue;
+use zbus::{OwnedVariant, Variant};
 
 /// Errors that can occur during MPRIS operations.
 #[derive(thiserror::Error, Debug)]
@@ -108,9 +108,9 @@ pub async fn query_player_priority(conn: &zbus::Connection, service: &str) -> Pl
             )
             .await
             .ok()?;
-        let val: OwnedValue = reply.body().deserialize().ok()?;
+        let val: OwnedVariant = reply.body().deserialize().ok()?;
         let status = match val.deref() {
-            zvariant::Value::Str(s) => s.as_str(),
+            Variant::Str(s) => s.as_str(),
             _ => return None,
         };
         Some(PlaybackPriority::from_status_str(status))
@@ -257,10 +257,10 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
             )
             .await?;
 
-        let val: OwnedValue = reply.body().deserialize()?;
+        let val: OwnedVariant = reply.body().deserialize()?;
         let microsecs = match val.deref() {
-            zvariant::Value::I64(v) => *v,
-            zvariant::Value::U64(v) => *v as i64,
+            Variant::I64(v) => *v,
+            Variant::U64(v) => i64::try_from(*v).unwrap_or(i64::MAX),
             _ => {
                 return Err(MprisError::ZBus(zbus::Error::Failure(
                     "Unexpected Position property type from MPRIS player".into(),

@@ -7,8 +7,7 @@ use std::pin::Pin;
 use std::time::Duration;
 use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
-use zbus::{MatchRule, MessageStream};
-use zvariant::OwnedValue;
+use zbus::{MatchRule, MessageStream, OwnedVariant, Variant};
 
 use crate::mpris::connection::{MprisError, find_best_active_service, get_dbus_conn, get_position};
 use crate::mpris::metadata::{TrackMetadata, extract_metadata};
@@ -240,7 +239,7 @@ impl MprisEventHandler {
     /// Switch active tracking to the specified player service.
     async fn switch_to_player(&mut self, service: &str) -> Result<(), MprisError> {
         let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
-            .destination(service)?
+            .destination(service)
             .build()
             .await?;
 
@@ -296,21 +295,23 @@ impl MprisEventHandler {
         // Broker-level match rule for NameOwnerChanged filtered to org.mpris.MediaPlayer2.*
         let mpris_name_rule = MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
-            .interface("org.freedesktop.DBus")?
-            .member("NameOwnerChanged")?
-            .arg0ns("org.mpris.MediaPlayer2")?
-            .build();
+            .sender("org.freedesktop.DBus")
+            .path("/org/freedesktop/DBus")
+            .interface("org.freedesktop.DBus")
+            .member("NameOwnerChanged")
+            .arg0ns("org.mpris.MediaPlayer2")
+            .build()?;
         let mut name_owner_stream =
             MessageStream::for_match_rule(mpris_name_rule, &self.conn, None).await?;
 
         // Broker-level match rule for PropertiesChanged on /org/mpris/MediaPlayer2
         let mpris_prop_rule = MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
-            .interface("org.freedesktop.DBus.Properties")?
-            .member("PropertiesChanged")?
-            .path("/org/mpris/MediaPlayer2")?
-            .arg(0, "org.mpris.MediaPlayer2.Player")?
-            .build();
+            .interface("org.freedesktop.DBus.Properties")
+            .member("PropertiesChanged")
+            .path("/org/mpris/MediaPlayer2")
+            .arg(0, "org.mpris.MediaPlayer2.Player")
+            .build()?;
         let mut global_prop_stream =
             MessageStream::for_match_rule(mpris_prop_rule, &self.conn, None).await?;
 
@@ -367,7 +368,7 @@ impl MprisEventHandler {
                         }
                         Some(Ok(msg)) = global_prop_stream.next() => {
                             if let Ok((_iface, changed, _invalidated)) =
-                                msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+                                msg.body().deserialize::<(String, HashMap<String, OwnedVariant>, Vec<String>)>()
                                 && (changed.contains_key("PlaybackStatus") || changed.contains_key("Metadata"))
                             {
                                 let header = msg.header();
@@ -389,7 +390,7 @@ impl MprisEventHandler {
     ) -> Result<(), MprisError> {
         let service = self.current_service.clone();
         let proxy = MediaPlayer2PlayerProxy::builder(&self.conn)
-            .destination(service.as_str())?
+            .destination(service.as_str())
             .build()
             .await?;
 
@@ -633,10 +634,10 @@ impl MprisEventHandler {
                 // 7. Global MPRIS PropertiesChanged (cross-player transitions)
                 Some(Ok(msg)) = global_prop_stream.next() => {
                     if let Ok((_iface, changed, _invalidated)) =
-                        msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+                        msg.body().deserialize::<(String, HashMap<String, OwnedVariant>, Vec<String>)>()
                         && let Some(val) = changed.get("PlaybackStatus") {
                             let is_playing = match val.deref() {
-                                zvariant::Value::Str(s) => s.as_str() == "Playing",
+                                Variant::Str(s) => s.as_str() == "Playing",
                                 _ => false,
                             };
                             if is_playing {
@@ -817,13 +818,13 @@ mod tests {
         // 1. Verify broker-level match rule filtering with arg0ns
         let mpris_name_rule = MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")
+            .path("/org/freedesktop/DBus")
             .interface("org.freedesktop.DBus")
-            .unwrap()
             .member("NameOwnerChanged")
-            .unwrap()
             .arg0ns("org.mpris.MediaPlayer2")
-            .unwrap()
-            .build();
+            .build()
+            .unwrap();
         let mut mpris_stream = MessageStream::for_match_rule(mpris_name_rule, &conn, None)
             .await
             .unwrap();
@@ -834,8 +835,10 @@ mod tests {
         assert!(active.is_ok());
 
         if let Ok(Some(service)) = active {
-            let player_proxy =
-                crate::mpris::proxies::MediaPlayer2PlayerProxy::new(&conn, service.as_str()).await;
+            let player_proxy = crate::mpris::proxies::MediaPlayer2PlayerProxy::builder(&conn)
+                .destination(service.as_str())
+                .build()
+                .await;
             let status = if let Ok(ref p) = player_proxy {
                 p.playback_status().await.unwrap_or_default()
             } else {
@@ -858,7 +861,7 @@ mod tests {
         let _ = dbus_proxy
             .request_name(
                 non_mpris_name.as_ref(),
-                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
+                zbus::fdo::RequestNameFlags::REPLACE_EXISTING,
             )
             .await
             .unwrap();
@@ -890,7 +893,7 @@ mod tests {
         let reply = dbus_proxy
             .request_name(
                 test_bus_name.as_ref(),
-                zbus::fdo::RequestNameFlags::ReplaceExisting.into(),
+                zbus::fdo::RequestNameFlags::REPLACE_EXISTING,
             )
             .await
             .unwrap();

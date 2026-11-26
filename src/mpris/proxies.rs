@@ -1,8 +1,7 @@
 //! Consolidated D-Bus proxy interfaces for MPRIS and playerctld.
 
 use std::collections::HashMap;
-use zbus::proxy;
-use zvariant::OwnedValue;
+use zbus::{OwnedVariant, proxy};
 
 /// MPRIS MediaPlayer2.Player interface proxy
 #[proxy(
@@ -11,7 +10,7 @@ use zvariant::OwnedValue;
 )]
 pub trait MediaPlayer2Player {
     #[zbus(property)]
-    fn metadata(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+    fn metadata(&self) -> zbus::Result<HashMap<String, OwnedVariant>>;
 
     #[zbus(property)]
     fn playback_status(&self) -> zbus::Result<String>;
