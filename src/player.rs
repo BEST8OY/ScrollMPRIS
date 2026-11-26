@@ -19,6 +19,7 @@ pub struct PlayerState {
     pub service: Option<String>,
     pub rate: f64,
     pub calibrated: bool,
+    pub is_local: bool,
 }
 
 impl Default for PlayerState {
@@ -38,6 +39,7 @@ impl Default for PlayerState {
             service: None,
             rate: 1.0,
             calibrated: false,
+            is_local: false,
         }
     }
 }
@@ -52,6 +54,7 @@ impl PlayerState {
         self.first_artist = meta.first_artist.clone();
         self.album = meta.album.clone();
         self.length = meta.length;
+        self.is_local = meta.is_local;
         self.position = 0.0;
         self.err = None;
         self.last_position = 0.0;
@@ -101,8 +104,8 @@ impl PlayerState {
         self.last_update = Some(Instant::now());
         self.position = effective_position;
         self.rate = if rate > 0.0 { rate } else { 1.0 };
-        // Hold local clock advancement until CalibrationTracker confirms audio movement
-        self.calibrated = false;
+        // Local file:// tracks start immediately; streams hold until CalibrationTracker confirms movement
+        self.calibrated = self.playing && self.is_local;
     }
 
     /// Update playback rate without altering the current calibration state.
@@ -143,7 +146,7 @@ impl PlayerState {
         self.last_position = position;
         self.last_update = Some(Instant::now());
         self.position = position;
-        self.calibrated = false;
+        self.calibrated = self.playing && self.is_local;
     }
 
     /// Force playback calibration to active state (e.g. after transient calibration timeout).
@@ -417,6 +420,7 @@ mod tests {
             first_artist: "Queen".to_string(),
             album: "Album".to_string(),
             length: Some(180.0),
+            is_local: false,
         };
         let mut state = PlayerState::default();
         state.update_from_metadata(&meta);
@@ -429,5 +433,31 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(fallback_state.get_first_artist(), "Artist A");
+    }
+
+    #[test]
+    fn test_local_track_skips_buffering_hold() {
+        let local_meta = TrackMetadata {
+            title: "Local Track".to_string(),
+            is_local: true,
+            ..Default::default()
+        };
+        let mut state = PlayerState::default();
+        state.update_from_metadata(&local_meta);
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        assert!(state.calibrated);
+
+        state.reset_position_cache(42.0);
+        assert!(state.calibrated);
+
+        // Switching to a stream restores buffering hold
+        let stream_meta = TrackMetadata {
+            title: "Stream Track".to_string(),
+            is_local: false,
+            ..Default::default()
+        };
+        state.update_from_metadata(&stream_meta);
+        state.update_playback_dbus("Playing".to_string(), 0.0, 1.0);
+        assert!(!state.calibrated);
     }
 }

@@ -147,6 +147,21 @@ pub fn has_field_scroll_directives(format: &str) -> bool {
     FIELD_SPEC_RE.is_match(format)
 }
 
+/// Returns true if a format template contains live playback position tokens
+/// (`{position}`, `{elapsed}`, `{remaining}`, `{countdown}`) that require
+/// active position tracking and calibration.
+/// Static `{length}` / `{duration}` tokens come from metadata and do not.
+pub fn has_timer_tokens(format: &str) -> bool {
+    FIELD_RE.captures_iter(format).any(|caps| {
+        caps.get(1).is_some_and(|m| {
+            matches!(
+                m.as_str().to_ascii_lowercase().as_str(),
+                "position" | "elapsed" | "remaining" | "countdown"
+            )
+        })
+    })
+}
+
 /// Formats metadata for tooltip without truncating or scrolling, resolving all fields to full text.
 pub fn format_tooltip(format: &str, player_state: &PlayerState, config: &Config) -> String {
     let unwrapped = BLOCK_RE.replace_all(format, "$2");
@@ -793,5 +808,17 @@ mod tests {
         let rendered =
             render_scrolled_format(&config_first, &player_state, &mut scroll_states, false);
         assert_eq!(rendered, "Under Pressure - Queen");
+    }
+
+    #[test]
+    fn test_has_timer_tokens() {
+        assert!(!has_timer_tokens(
+            "{player_icon} {status_icon} {title} - {artist}"
+        ));
+        assert!(!has_timer_tokens("{title} [{length}] ({duration})"));
+        assert!(has_timer_tokens("{title} [{position}]"));
+        assert!(has_timer_tokens("{title} [{ELAPSED:5}]"));
+        assert!(has_timer_tokens("[scroll:20]{remaining}[/scroll]"));
+        assert!(has_timer_tokens("{countdown}/{length}"));
     }
 }

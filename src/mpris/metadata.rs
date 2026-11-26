@@ -14,6 +14,15 @@ pub struct TrackMetadata {
     pub first_artist: String,
     pub album: String,
     pub length: Option<f64>,
+    pub is_local: bool,
+}
+
+/// Returns true if an MPRIS `xesam:url` points to a local file (`file://`).
+pub fn is_local_media_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    trimmed
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
 }
 
 /// Check if an MPRIS `mpris:trackid` represents the canonical "NoTrack" sentinel
@@ -217,6 +226,10 @@ pub fn extract_metadata(map: &HashMap<String, OwnedVariant>) -> TrackMetadata {
         .and_then(extract_joined_string_array)
         .unwrap_or_default();
     let length = map.get("mpris:length").and_then(extract_length_seconds);
+    let is_local = map
+        .get("xesam:url")
+        .and_then(extract_string_or_first_item)
+        .is_some_and(|u| is_local_media_url(&u));
 
     TrackMetadata {
         title,
@@ -224,6 +237,7 @@ pub fn extract_metadata(map: &HashMap<String, OwnedVariant>) -> TrackMetadata {
         first_artist,
         album,
         length,
+        is_local,
     }
 }
 
@@ -440,5 +454,36 @@ mod tests {
         let (all, first) = extract_artists(&val_str);
         assert_eq!(all, "Artist A, Artist B");
         assert_eq!(first, "Artist A");
+    }
+
+    #[test]
+    fn test_extract_metadata_local_vs_remote_url() {
+        assert!(is_local_media_url("file:///home/user/Music/song.flac"));
+        assert!(is_local_media_url("FILE:///tmp/test.mp3"));
+        assert!(!is_local_media_url("https://open.spotify.com/track/123"));
+        assert!(!is_local_media_url("http://stream.example.com/live"));
+        assert!(!is_local_media_url(""));
+
+        let mut local_map = HashMap::new();
+        local_map.insert(
+            "xesam:title".to_string(),
+            OwnedVariant::try_from(Variant::from("Local Song")).unwrap(),
+        );
+        local_map.insert(
+            "xesam:url".to_string(),
+            OwnedVariant::try_from(Variant::from("file:///music/local.ogg")).unwrap(),
+        );
+        assert!(extract_metadata(&local_map).is_local);
+
+        let mut remote_map = HashMap::new();
+        remote_map.insert(
+            "xesam:title".to_string(),
+            OwnedVariant::try_from(Variant::from("Stream Song")).unwrap(),
+        );
+        remote_map.insert(
+            "xesam:url".to_string(),
+            OwnedVariant::try_from(Variant::from("https://example.com/stream.opus")).unwrap(),
+        );
+        assert!(!extract_metadata(&remote_map).is_local);
     }
 }

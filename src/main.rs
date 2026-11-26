@@ -16,6 +16,7 @@ async fn main() -> Result<()> {
     let mut player_state = PlayerState::default();
     let (tx, mut rx) = mpsc::channel::<MprisEvent>(32);
     let block_list = config.blocked.clone();
+    let calibrate_position = config.uses_timer_tokens();
 
     // Write PID
     let timestamp = SystemTime::now()
@@ -38,7 +39,7 @@ async fn main() -> Result<()> {
                 let tx = tx.clone();
                 let block_list = block_list.clone();
 
-                match MprisEventHandler::new(tx, block_list).await {
+                match MprisEventHandler::new(tx, block_list, calibrate_position).await {
                     Ok(mut event_handler) => {
                         let start = std::time::Instant::now();
                         if let Err(e) = event_handler.handle_events().await {

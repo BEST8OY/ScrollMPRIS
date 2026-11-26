@@ -461,6 +461,14 @@ impl Config {
         }
         Self::from_args(args).unwrap_or_default()
     }
+
+    /// Returns true if any configured output template (`format`, `format_stopped`, or
+    /// `tooltip_format`) references live playback position/countdown timer tokens.
+    pub fn uses_timer_tokens(&self) -> bool {
+        crate::utils::has_timer_tokens(&self.format)
+            || crate::utils::has_timer_tokens(&self.format_stopped)
+            || crate::utils::has_timer_tokens(&self.tooltip_format)
+    }
 }
 
 #[cfg(test)]
@@ -631,5 +639,29 @@ mod tests {
         };
         config_cli.apply_cli_overrides(cli);
         assert!(config_cli.first_artist);
+    }
+
+    #[test]
+    fn test_uses_timer_tokens() {
+        let mut config = Config::default();
+        assert!(!config.uses_timer_tokens());
+
+        config.format = "{title} [{length}]".to_string();
+        assert!(!config.uses_timer_tokens());
+
+        config.format = "{title} [{position}/{length}]".to_string();
+        assert!(config.uses_timer_tokens());
+
+        config = Config {
+            tooltip_format: "{title} ({remaining})".to_string(),
+            ..Default::default()
+        };
+        assert!(config.uses_timer_tokens());
+
+        config = Config {
+            format_stopped: "{elapsed}".to_string(),
+            ..Default::default()
+        };
+        assert!(config.uses_timer_tokens());
     }
 }
