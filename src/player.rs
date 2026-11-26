@@ -93,22 +93,12 @@ impl PlayerState {
     pub fn update_playback_dbus(&mut self, playback_status: String, position: f64, rate: f64) {
         self.playing = playback_status == "Playing";
         self.status = playback_status;
-        let current_pos = self.estimate_position();
-        let effective_position = if self.is_spurious_zero(position, current_pos) {
-            current_pos
-        } else {
-            position
-        };
-
-        self.last_position = effective_position;
-        self.last_update = Some(Instant::now());
-        self.position = effective_position;
-        self.rate = if rate > 0.0 { rate } else { 1.0 };
+        self.update_rate(position, rate);
         // Local file:// tracks start immediately; streams hold until CalibrationTracker confirms movement
         self.calibrated = self.playing && self.is_local;
     }
 
-    /// Update playback rate without altering the current calibration state.
+    /// Update playback rate and position without altering the current calibration state.
     pub fn update_rate(&mut self, position: f64, rate: f64) {
         let current_pos = self.estimate_position();
         let effective_position = if self.is_spurious_zero(position, current_pos) {

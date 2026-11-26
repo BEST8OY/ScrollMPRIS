@@ -246,6 +246,26 @@ impl MprisEventHandler {
         }
     }
 
+    async fn apply_status_change(
+        &mut self,
+        proxy: &MediaPlayer2PlayerProxy<'_>,
+        tracker: &mut CalibrationTracker,
+        status: String,
+    ) {
+        self.last_playback_status = status.clone();
+        let position = self
+            .query_position_if_needed(proxy, self.last_position)
+            .await;
+        self.last_position = position;
+        let rate = proxy.rate().await.unwrap_or(1.0);
+        self.sync_tracker_for_playback(tracker, position);
+        self.emit(MprisEvent::StatusChange {
+            playback_status: status,
+            position,
+            rate,
+        });
+    }
+
     /// Discover the active MPRIS player and switch to it if found.
     pub async fn discover_active_player(&mut self) -> Result<(), MprisError> {
         self.discover_active_player_with_hint(None).await
@@ -511,21 +531,11 @@ impl MprisEventHandler {
                 Some(_) = status_stream.next() => {
                     let status = proxy.playback_status().await?;
                     if status != self.last_playback_status {
-                        self.last_playback_status = status.clone();
-                        let position = self
-                            .query_position_if_needed(&proxy, self.last_position)
-                            .await;
-                        self.last_position = position;
-                        let rate = proxy.rate().await.unwrap_or(1.0);
-                        self.sync_tracker_for_playback(&mut tracker, position);
-                        self.emit(MprisEvent::StatusChange {
-                            playback_status: status.clone(),
-                            position,
-                            rate,
-                        });
+                        let is_stopped = status == "Stopped";
+                        self.apply_status_change(&proxy, &mut tracker, status).await;
 
                         // If current player transitioned to Stopped, check if another player is currently Playing
-                        if status == "Stopped"
+                        if is_stopped
                             && let Ok(Some(ref best_service)) = find_best_active_service(
                                 &self.block_list,
                                 Some(&self.current_service),
@@ -584,18 +594,7 @@ impl MprisEventHandler {
                             if let Ok(status) = proxy.playback_status().await
                                 && status != self.last_playback_status
                             {
-                                self.last_playback_status = status.clone();
-                                let position = self
-                                    .query_position_if_needed(&proxy, self.last_position)
-                                    .await;
-                                self.last_position = position;
-                                let rate = proxy.rate().await.unwrap_or(1.0);
-                                self.sync_tracker_for_playback(&mut tracker, position);
-                                self.emit(MprisEvent::StatusChange {
-                                    playback_status: status,
-                                    position,
-                                    rate,
-                                });
+                                self.apply_status_change(&proxy, &mut tracker, status).await;
                             }
                         }
                         Ok(Some(best_service)) => {
