@@ -8,10 +8,12 @@ pub mod proxies;
 #[allow(unused_imports)]
 pub use connection::{
     MprisError, PlaybackPriority, find_active_service, find_best_active_service,
-    get_active_player_names, get_position, is_blocked,
+    get_active_player_names, get_position, get_position_from_proxy, is_blocked,
 };
 #[allow(unused_imports)]
-pub use events::{CalibrationStepResult, MprisEvent, MprisEventHandler};
+pub use events::{
+    CalibrationStepResult, MOVEMENT_DELTA_THRESHOLD_SECS, MprisEvent, MprisEventHandler,
+};
 #[allow(unused_imports)]
 pub use metadata::{
     TrackMetadata, extract_artists, extract_first_artist_from_str, extract_joined_string_array,

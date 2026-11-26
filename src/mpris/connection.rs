@@ -1,6 +1,6 @@
 //! D-Bus connection management and player discovery for MPRIS.
 
-use super::proxies::PlayerctldProxy;
+use super::proxies::{MediaPlayer2PlayerProxy, PlayerctldProxy};
 use std::ops::Deref;
 use tokio::sync::OnceCell;
 use zbus::fdo::DBusProxy;
@@ -239,6 +239,36 @@ pub fn is_blocked(service: &str, block_list: &[String]) -> bool {
 /// Timeout applied to dynamic D-Bus queries to prevent frozen players from blocking the caller.
 const DBUS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// Unpack an MPRIS `Position` variant (microseconds as `i64` or non-compliant `u64`) into seconds.
+fn parse_position_variant(val: &OwnedVariant) -> Result<f64, MprisError> {
+    let microsecs = match val.deref() {
+        Variant::I64(v) => *v,
+        Variant::U64(v) => i64::try_from(*v).unwrap_or(i64::MAX),
+        _ => {
+            return Err(MprisError::ZBus(zbus::Error::Failure(
+                "Unexpected Position property type from MPRIS player".into(),
+            )));
+        }
+    };
+
+    Ok((microsecs.max(0) as f64) / 1_000_000.0)
+}
+
+/// Query current dynamic position from an existing proxy with a timeout,
+/// handling both standard `i64` and non-compliant `u64` MPRIS players.
+pub async fn get_position_from_proxy(
+    proxy: &MediaPlayer2PlayerProxy<'_>,
+) -> Result<f64, MprisError> {
+    let query = async {
+        let val: OwnedVariant = proxy.inner().get_property("Position").await?;
+        parse_position_variant(&val)
+    };
+
+    tokio::time::timeout(DBUS_QUERY_TIMEOUT, query)
+        .await
+        .map_err(|_| MprisError::Timeout)?
+}
+
 /// Query current dynamic position directly using direct D-Bus `Properties.Get`
 /// to bypass proxy caches and eliminate proxy construction overhead.
 pub async fn get_position(service: &str) -> Result<f64, MprisError> {
@@ -258,17 +288,7 @@ pub async fn get_position(service: &str) -> Result<f64, MprisError> {
             .await?;
 
         let val: OwnedVariant = reply.body().deserialize()?;
-        let microsecs = match val.deref() {
-            Variant::I64(v) => *v,
-            Variant::U64(v) => i64::try_from(*v).unwrap_or(i64::MAX),
-            _ => {
-                return Err(MprisError::ZBus(zbus::Error::Failure(
-                    "Unexpected Position property type from MPRIS player".into(),
-                )));
-            }
-        };
-
-        Ok(microsecs as f64 / 1_000_000.0)
+        parse_position_variant(&val)
     };
 
     tokio::time::timeout(DBUS_QUERY_TIMEOUT, query)

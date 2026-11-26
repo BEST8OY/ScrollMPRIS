@@ -645,6 +645,7 @@ mod tests {
     fn test_player_state_rate_estimation() {
         let mut state = PlayerState::default();
         state.update_playback_dbus("Playing".to_string(), 10.0, 2.0);
+        state.force_calibrate();
         // Simulate 2 seconds of real time elapsed
         state.last_update = Some(Instant::now() - Duration::from_secs(2));
 
@@ -789,7 +790,8 @@ mod tests {
         assert_eq!(tooltip, "Under Pressure by Queen (Queen)");
 
         let mut scroll_states = ScrollStateMap::new();
-        let rendered = render_scrolled_format(&config_first, &player_state, &mut scroll_states, false);
+        let rendered =
+            render_scrolled_format(&config_first, &player_state, &mut scroll_states, false);
         assert_eq!(rendered, "Under Pressure - Queen");
     }
 }

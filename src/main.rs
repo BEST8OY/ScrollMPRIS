@@ -2,7 +2,7 @@ use std::fs;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ScrollMPRIS::config::Config;
-use ScrollMPRIS::mpris::events::{MprisEvent, MprisEventHandler};
+use ScrollMPRIS::mpris::events::{MOVEMENT_DELTA_THRESHOLD_SECS, MprisEvent, MprisEventHandler};
 use ScrollMPRIS::player::{DEFAULT_CALIBRATION_DRIFT_THRESHOLD, PlayerState};
 use ScrollMPRIS::utils::{ScrollStateMap, print_status};
 use anyhow::Result;
@@ -87,12 +87,20 @@ async fn main() -> Result<()> {
                     MprisEvent::StatusChange { playback_status, position, rate } => {
                         player_state.update_playback_dbus(playback_status, position, rate);
                     }
+                    MprisEvent::RateChange { position, rate } => {
+                        player_state.update_rate(position, rate);
+                    }
                     MprisEvent::Seeked { position } => {
                         player_state.reset_position_cache(position);
                     }
                     MprisEvent::Calibrated { metadata, position } => {
                         if !player_state.has_changed(&metadata) {
-                            player_state.calibrate_position(position, DEFAULT_CALIBRATION_DRIFT_THRESHOLD);
+                            let threshold = if player_state.calibrated {
+                                DEFAULT_CALIBRATION_DRIFT_THRESHOLD
+                            } else {
+                                MOVEMENT_DELTA_THRESHOLD_SECS
+                            };
+                            player_state.calibrate_position(position, threshold);
                         }
                     }
                     MprisEvent::CalibrationTimeout => {
